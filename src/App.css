@@ -695,6 +695,9 @@ html, body, #root {
     /* Never spill past the viewport on a narrow phone (account for the right
        safe-area inset since the bar is right-anchored). */
     max-width: calc(100vw - 16px - var(--safe-right));
+    /* Keep every compact-menu option reachable inside short viewports. */
+    max-height: calc(100dvh - var(--toolbar-h) - var(--safe-top) - 8px);
+    overflow-y: auto;
     padding: 6px;
     display: flex;
     flex-direction: column;

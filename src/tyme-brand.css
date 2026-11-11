@@ -1,0 +1,55 @@
+/* Tyme's existing wide banner replaces the square stock mark on landing/About. */
+.connection-brand,
+.about-wordmark {
+    flex-direction: column;
+}
+
+.connection-brand-logo,
+.about-logo {
+    width: min(320px, 80vw);
+    height: auto;
+    max-height: 64px;
+    object-fit: contain;
+}
+
+/* The banner's left-hand Wheel remains recognizable in the compact toolbar. */
+.brand-logo {
+    width: 22px;
+    height: 22px;
+    object-fit: cover;
+    object-position: left;
+}
+
+.tyme-build-source {
+    margin-top: 8px;
+}
+
+.tyme-port-error .connection-panel {
+    max-width: 560px;
+    text-align: center;
+}
+
+@media (max-width: 640px) {
+    .brand-logo {
+        display: none;
+    }
+
+    /* Reserve room for the panel's top-right controls: the wide banner sits
+     * beside them on the same row at phone widths. The banner is centred in
+     * the panel, so the usable half-width rules the cap: 176px clears both
+     * tools buttons, their gap and the panel's right padding with margin.
+     * Desktop keeps the full size. */
+    .connection-brand-logo {
+        width: min(320px, calc(100vw - 176px));
+    }
+
+    /* The in-game header otherwise shows the brand's name twice — the toolbar
+     * mark and the connection title both carry it — and the long title's
+     * ellipsis was cutting off the selected port. Dropping the mark's text on
+     * phones frees exactly the room the title needs; the title still names
+     * the brand and the port, and no profile identity changes. Other brand
+     * uses of the class (e.g. the map editor logo) are untouched. */
+    .mudlet-topbar > .mudlet-toolbar .brand {
+        display: none;
+    }
+}

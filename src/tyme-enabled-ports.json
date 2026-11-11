@@ -1,0 +1,10 @@
+[
+  {
+    "port": 8000,
+    "label": "Testport"
+  },
+  {
+    "port": 9696,
+    "label": "Builderport"
+  }
+]

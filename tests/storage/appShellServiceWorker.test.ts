@@ -256,6 +256,20 @@ describe('app shell service worker', () => {
         expect(await (await navigation(sw, '/'))!.text()).toBe('<!doctype html>updated');
     });
 
+    it('does not replace the app shell with another navigation document', async () => {
+        sw.network.set('/source.html', '<!doctype html><title>Source and licenses</title>');
+        expect(await (await navigation(sw, '/source.html'))!.text()).toContain('Source and licenses');
+
+        sw.offline = true;
+        expect(await (await navigation(sw, '/?port=8000'))!.text()).toBe(SHELL);
+    });
+
+    it('does not seed the shell cache with an error response', async () => {
+        const broken = loadWorker({});
+        await broken.install();
+        expect(broken.cacheStorage.caches.get('mudlet-app-v1')?.entries.has(SCOPE)).not.toBe(true);
+    });
+
     it('serves hashed assets from cache without a second network round-trip', async () => {
         const first = await sw.request('/assets/index-hf1D-FYj.js');
         expect(await first!.text()).toBe('console.log(1)');

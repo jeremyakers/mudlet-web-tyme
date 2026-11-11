@@ -11,7 +11,7 @@ function makeHandler() {
     (maskInput) => masks.push(maskInput),
     () => { anomalies++; },
   );
-  handler.reset(); // establishes connectionStartAt, clears state
+  handler.reset(); // clears state
   return { handler, sent, masks, anomalies: () => anomalies };
 }
 
@@ -64,41 +64,52 @@ describe('EchoHandler — masking follows the server taking ECHO', () => {
     expect(masks).toEqual([true]);
   });
 
-  it('forces ECHO off when a server never sends the WONT that ends a prompt', () => {
-    const { handler, sent } = makeHandler();
+  it('keeps masking after any delay until the server sends WONT ECHO', () => {
+    const { handler } = makeHandler();
 
     handler.processData(ECHO_WILL);
     expect(handler.serverEchoing).toBe(true);
 
-    // Past the 60s safety window Mudlet arms during the login phase: a server
-    // that took ECHO and never gave it back would otherwise leave the input
-    // masked for the rest of the session.
+    // Mudlet's login-phase safety timer unmasked input while the game was
+    // still awaiting a password. Tyme keeps the prompt private until the
+    // server itself ends it — no timer can beat a server that is slower
+    // than any fixed window.
     vi.advanceTimersByTime(61_000);
+    expect(handler.serverEchoing).toBe(true);
+
+    handler.processData(ECHO_WONT);
     expect(handler.serverEchoing).toBe(false);
-    expect(sent).toContain(ECHO_DONT);
   });
 });
 
-// cTelnet's WILL ECHO branch asks checkEchoAnomalyPattern() first, which stays
-// true once tripped, so every later offer is answered DONT ECHO (#354).
-describe('EchoHandler — after an echo anomaly', () => {
+// The anomaly pattern is diagnostic in Tyme: cTelnet's sticky refusal lived
+// here and unmasked every later password prompt — a wrong-password retry loop
+// (WONT/WILL per attempt) crosses the same 5-in-5000ms window. The engine
+// event still fires; the negotiation itself is untouched (#354).
+describe('EchoHandler — an ECHO anomaly is reported, not enforced', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("answers the server's next WILL ECHO with DONT ECHO and stays unmasked", () => {
-    const { handler, sent, anomalies } = makeHandler();
+  it('reports the bouncing pattern once and keeps masking on the prompt', () => {
+    const { handler, sent, masks, anomalies } = makeHandler();
     for (let i = 0; i < 5; i++) handler.processData(i % 2 === 0 ? ECHO_WILL : ECHO_WONT);
     expect(handler.anomalyDetected).toBe(true);
     expect(anomalies()).toBe(1);
 
+    // The next prompt is masked as the negotiation says, and answered with
+    // the ordinary acknowledgements — never with a session-wide refusal.
     sent.length = 0;
-    handler.processData(ECHO_WILL);
-    expect(sent).toEqual([ECHO_DONT]);
-    expect(handler.serverEchoing).toBe(false);
-
-    sent.length = 0;
+    masks.length = 0;
     handler.processData(ECHO_WONT);
-    expect(sent).toEqual([]);
-    expect(anomalies()).toBe(1);
+    handler.processData(ECHO_WILL);
+    expect(sent).toEqual([ECHO_DONT, ECHO_DO]);
+    expect(handler.serverEchoing).toBe(true);
+    expect(masks).toEqual([false, true]);
+
+    // WONT ECHO still ends it, as on any clean connection.
+    masks.length = 0;
+    handler.processData(ECHO_WONT);
+    expect(handler.serverEchoing).toBe(false);
+    expect(masks).toEqual([false]);
   });
 });

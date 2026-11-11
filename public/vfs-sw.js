@@ -68,6 +68,10 @@ function isAppAsset(url) {
     return inScope(url) && (HASHED_ASSET.test(url.pathname) || STATIC_FILE.test(url.pathname));
 }
 
+function isAppDocument(url) {
+    return url.pathname === SCOPE_PATH || url.pathname === `${SCOPE_PATH}index.html`;
+}
+
 self.addEventListener('install', (event) => {
     self.skipWaiting();
     if (APP_SHELL) event.waitUntil(cacheShell());
@@ -123,7 +127,8 @@ async function cacheShell() {
         const cache = await caches.open(APP_CACHE);
         // `reload` so an install triggered by a reload of a stale page doesn't
         // seed the cache from the HTTP cache's copy of the old document.
-        await cache.put(SHELL_URL, await fetch(new Request(SHELL_URL, { cache: 'reload' })));
+        const response = await fetch(new Request(SHELL_URL, { cache: 'reload' }));
+        if (response.ok && response.type === 'basic') await cache.put(SHELL_URL, response);
     } catch {
         // Installed while offline, or the shell 404s under this scope. The first
         // successful navigation fills it in.
@@ -144,7 +149,7 @@ async function shellFirst(request) {
         // server that cannot be reached still throws, so the offline path below
         // is unchanged.
         const response = await fetch(new Request(request, { cache: 'no-cache' }));
-        if (response.ok && response.type === 'basic') {
+        if (response.ok && response.type === 'basic' && isAppDocument(new URL(request.url))) {
             cache.put(SHELL_URL, response.clone()).catch(() => {});
         }
         return response;

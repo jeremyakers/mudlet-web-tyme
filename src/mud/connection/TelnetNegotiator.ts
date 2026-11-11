@@ -633,6 +633,15 @@ export class TelnetNegotiator {
                     // refuse a later restart.
                     this.mxpStarted = false;
                     break;
+                case OPT_TTYPE_NUM:
+                    // The MTTS standard pairs a cycle-end with the withdrawal:
+                    // after `IAC DONT TTYPE` the client answers its next SEND
+                    // from the top of the list again. A real exec copyover
+                    // re-runs the server init (DONT/DO TTYPE) mid-cycle; a
+                    // reset-less negotiator then identifies itself with the
+                    // MTTS bitvector instead of its client name.
+                    if (cmd === DONT) this.ttypeStep = 0;
+                    break;
             }
             if (PROTOCOL_NAMES.has(opt)) this.withdrawProtocol(opt);
             // Then acknowledge it like any other option. WONT ECHO is the one

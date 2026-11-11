@@ -7,6 +7,19 @@ import { credentialVault } from './vault/CredentialVault';
 import { VaultModal } from './ui/VaultModal';
 import { installVault } from './vault/vaultAccess';
 import { installVaultHelpTopic } from './vault/vaultHelpTopic';
+import { tymeBrandFromSearch, TymePortError } from './tyme-brand';
+import './tyme-brand.css';
+
+const tymeBrand = tymeBrandFromSearch(window.location.search);
+if (tymeBrand?.mud?.mode === 'mud') {
+    // Only a validated, configured brand creates a manifest link. The static
+    // standalone document advertises no invalid portless launch, while the
+    // stock library/default manifest file remains untouched for other users.
+    const manifest = document.createElement('link');
+    manifest.rel = 'manifest';
+    manifest.href = `./manifest-${tymeBrand.mud.port}.webmanifest`;
+    document.head.append(manifest);
+}
 
 // The stock app is just MudletWebApp with no brand — branded builds import
 // MudletWebApp from the library entry and pass their own BrandConfig. Page
@@ -30,7 +43,7 @@ void Promise.race([
 ]).finally(() => {
     createRoot(document.getElementById('root')!).render(
         <StrictMode>
-            <MudletWebApp />
+            {tymeBrand ? <MudletWebApp brand={tymeBrand} /> : <TymePortError />}
         </StrictMode>,
     );
 });
