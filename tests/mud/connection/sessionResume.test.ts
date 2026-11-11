@@ -5,73 +5,9 @@ import { EventBus } from '../../../src/core/EventBus';
 import type { MudClientEvents } from '../../../src/mud/events';
 import { ECHO_WILL, ECHO_WONT, SGA_WILL, TELNET_GA } from '../../../src/mud/protocol/constants';
 
-type Control = Record<string, unknown>;
-
-/** A browser WebSocket stand-in: records what is sent and lets a test deliver
- *  frames, closes and drops on demand. */
-class MockWebSocket {
-    static CONNECTING = 0;
-    static OPEN = 1;
-    static CLOSING = 2;
-    static CLOSED = 3;
-    static all: MockWebSocket[] = [];
-    readyState = MockWebSocket.OPEN;
-    binaryType = '';
-    bufferedAmount = 0;
-    protocol = '';
-    sent: (Uint8Array | string)[] = [];
-    onopen: ((ev: unknown) => void) | null = null;
-    onmessage: ((ev: { data: ArrayBuffer | string }) => void) | null = null;
-    onclose: ((ev: unknown) => void) | null = null;
-    onerror: ((ev: unknown) => void) | null = null;
-    constructor(public url: string) { MockWebSocket.all.push(this); }
-    send(data: Uint8Array | string): void { this.sent.push(data); }
-    close(): void { this.readyState = MockWebSocket.CLOSED; }
-
-    text(msg: Control): void { this.onmessage?.({ data: JSON.stringify(msg) }); }
-    /** Raw game bytes, as a plain proxy sends them. */
-    raw(text: string): void { this.onmessage?.({ data: bytes(text).buffer }); }
-    /** One sequenced range of game output. */
-    frame(offset: bigint, text: string): void { this.onmessage?.({ data: envelope(offset, text) }); }
-    /** The transport dies with no close frame — the phone losing its network. */
-    drop(): void { this.readyState = MockWebSocket.CLOSED; this.onclose?.({ code: 1006, reason: '', wasClean: false }); }
-    closeWith(code: number, reason: string): void { this.readyState = MockWebSocket.CLOSED; this.onclose?.({ code, reason, wasClean: true }); }
-
-    controls(): Control[] { return this.sent.flatMap(s => (typeof s === 'string' ? [JSON.parse(s)] : [])); }
-    /** Sent binary: raw bytes before the marker, `{ offset, text }` envelopes after. */
-    sentText(): string[] { return this.sent.flatMap(s => (typeof s === 'string' ? [] : [new TextDecoder().decode(s)])); }
-    envelopes(): { offset: bigint; text: string }[] {
-        return this.sent.flatMap(s => (typeof s === 'string' ? [] : [{
-            offset: new DataView(s.buffer, s.byteOffset).getBigUint64(0, false),
-            text: new TextDecoder().decode(s.subarray(8)),
-        }]));
-    }
-}
-
-function bytes(text: string) {
-    return Uint8Array.from(text, c => c.charCodeAt(0));
-}
-
-function envelope(offset: bigint, text: string): ArrayBuffer {
-    const framed = new Uint8Array(8 + text.length);
-    new DataView(framed.buffer).setBigUint64(0, offset, false);
-    framed.set(bytes(text), 8);
-    return framed.buffer;
-}
-
-const OFFER = { type: 'session.offer', versions: [1], offerId: 'offer-1' };
-const marker = (input: bigint, output: bigint): Control => ({
-    type: 'session.enabled', sessionId: 'session-1', secret: 'c2VjcmV0', resumePath: 'resume',
-    input: String(input), output: String(output),
-});
-const sameSession = { sessionId: 'session-1', secret: 'c2VjcmV0' };
-/** What `connectionUrl` actually builds: no slash before the query. */
-const PROXY = 'wss://relay.test/relay?host=game.test&port=23';
-
-const visibility = (state: 'visible' | 'hidden'): void => {
-    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
-};
-const visit = (): void => { visibility('hidden'); document.dispatchEvent(new Event('visibilitychange')); visibility('visible'); document.dispatchEvent(new Event('visibilitychange')); };
+import {
+    BrowserMockWebSocket, OFFER, PROXY, marker, sameSession, visibility, visit,
+} from '../../support/resumableSocket';
 
 describe('session resumption (client)', () => {
     let client: MudClient;
@@ -79,11 +15,11 @@ describe('session resumption (client)', () => {
     let errors: string[];
     let warnings: string[];
     let shown: string;
-    let ws: MockWebSocket;
+    let ws: BrowserMockWebSocket;
 
     beforeEach(() => {
-        vi.stubGlobal('WebSocket', MockWebSocket);
-        MockWebSocket.all = [];
+        vi.stubGlobal('WebSocket', BrowserMockWebSocket);
+        BrowserMockWebSocket.all = [];
         visibility('hidden');                  // so a loss does not start an automatic attempt by itself
         const bus = new EventBus<MudClientEvents>();
         events = [];
@@ -98,7 +34,7 @@ describe('session resumption (client)', () => {
         bus.on('flushLines', groups => { shown += groups.map(g => g.text).join(''); });
         client = new MudClient({ url: PROXY }, bus);
         client.connect();
-        ws = MockWebSocket.all[0];
+        ws = BrowserMockWebSocket.all[0];
         ws.onopen?.({});
         ws.text({ type: 'game.connected' });
         events.length = 0;
@@ -179,9 +115,9 @@ describe('session resumption (client)', () => {
         ws.frame(0n, 'banner\n');
         ws.drop();
     };
-    const resume = (): MockWebSocket => {
+    const resume = (): BrowserMockWebSocket => {
         expect(client.resumeTransport()).toBe(true);
-        const dial = MockWebSocket.all[MockWebSocket.all.length - 1];
+        const dial = BrowserMockWebSocket.all[BrowserMockWebSocket.all.length - 1];
         dial.onopen?.({});
         return dial;
     };
@@ -191,7 +127,7 @@ describe('session resumption (client)', () => {
         expect(events).toEqual(['client.detached']);       // nothing that logs in or reconnects runs
         expect(client.transportDetached()).toBe(true);
         client.send('offline');
-        expect(MockWebSocket.all).toHaveLength(1);
+        expect(BrowserMockWebSocket.all).toHaveLength(1);
         expect(ws.envelopes().map(e => e.text)).toEqual(['look\r\n', 'peek\r\n']);   // nothing more went out
     });
 
@@ -247,7 +183,7 @@ describe('session resumption (client)', () => {
             client.send('look');                           // arms the window
             ws.drop();
             client.resumeTransport();
-            const dial = MockWebSocket.all[1];
+            const dial = BrowserMockWebSocket.all[1];
             dial.onopen?.({});
             const queued = 'queued\n';
             dial.text({ type: 'session.resumed', input: String(dial.controls()[0].inputEnd), catchupEnd: String(6 + queued.length + tail.length), backendConnected: true });
@@ -273,7 +209,7 @@ describe('session resumption (client)', () => {
             vi.advanceTimersByTime(3_000);
             client.disconnect();
             client.connect();                              // a fresh game, not transport resumption
-            const fresh = MockWebSocket.all[MockWebSocket.all.length - 1];
+            const fresh = BrowserMockWebSocket.all[BrowserMockWebSocket.all.length - 1];
             fresh.onopen?.({});
             fresh.text(OFFER);
             fresh.text(marker(0n, 0n));
@@ -281,7 +217,7 @@ describe('session resumption (client)', () => {
             client.send('look');                          // the new game's own window has just started
             fresh.drop();
             client.resumeTransport();
-            const dial = MockWebSocket.all[MockWebSocket.all.length - 1];
+            const dial = BrowserMockWebSocket.all[BrowserMockWebSocket.all.length - 1];
             dial.onopen?.({});
             dial.text({ type: 'session.resumed', input: dial.controls()[0].inputEnd, catchupEnd: '6', backendConnected: true });
             expect(events).not.toContain('charmode.detected');
@@ -297,7 +233,7 @@ describe('session resumption (client)', () => {
         expect(events).toEqual([]);
         expect(client.transportDetached()).toBe(false);
         visit();                                           // its own retry finds the session gone, and stops
-        const retry = MockWebSocket.all[2];
+        const retry = BrowserMockWebSocket.all[2];
         retry.onopen?.({});
         retry.text({ type: 'session.unavailable' });
         expect(events).toEqual([]);
@@ -308,7 +244,7 @@ describe('session resumption (client)', () => {
         client.send('x'.repeat(1024 * 1024));              // past the bound on what may wait for the game
         expect(errors.join()).toMatch(/Too much input/);
         expect(events).toEqual(['client.detached', 'client.disconnect']);
-        const end = MockWebSocket.all[1];                  // and the relay is still asked to end it
+        const end = BrowserMockWebSocket.all[1];                  // and the relay is still asked to end it
         end.onopen?.({});
         expect(end.controls()).toMatchObject([{ type: 'session.end', ...sameSession }]);
         end.text({ type: 'session.ended' });
@@ -327,24 +263,24 @@ describe('session resumption (client)', () => {
         enable();
         ws.drop();
         client.resumeTransport();
-        const dial = MockWebSocket.all[1];
+        const dial = BrowserMockWebSocket.all[1];
         dial.onopen?.({});
         dial.text({ type: 'session.unavailable', reason: 'unavailable' });
         expect(errors.join()).toMatch(/could not be resumed/);
         expect(events).toEqual(['client.detached', 'client.disconnect']);
         expect(client.resumeTransport()).toBe(false);
-        expect(MockWebSocket.all).toHaveLength(2);
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
     });
 
     it('ends the retained session on an explicit disconnect from the live socket, closing it on the relay\'s answer', () => {
         enable();
         client.disconnect();
         expect(ws.controls().at(-1)).toMatchObject({ type: 'session.end', ...sameSession });
-        expect(ws.readyState).toBe(MockWebSocket.OPEN);    // a socket already closing would drop the answer
+        expect(ws.readyState).toBe(BrowserMockWebSocket.OPEN);    // a socket already closing would drop the answer
         ws.text({ type: 'session.ended' });
-        expect(ws.readyState).toBe(MockWebSocket.CLOSED);
+        expect(ws.readyState).toBe(BrowserMockWebSocket.CLOSED);
         visit();
-        expect(MockWebSocket.all).toHaveLength(1);         // confirmed: nothing more to try
+        expect(BrowserMockWebSocket.all).toHaveLength(1);         // confirmed: nothing more to try
     });
 
     it('keeps an end its live socket never answered pending, and retries it as an end — never a resume — on the next visit', () => {
@@ -357,15 +293,15 @@ describe('session resumption (client)', () => {
         expect(warnings.join()).toMatch(/to end the game session, so the character may still be logged in/);
         expect(events).toEqual(['client.disconnect']);     // the disconnect's own close, and no second one
         visit();
-        expect(MockWebSocket.all).toHaveLength(2);
-        const retry = MockWebSocket.all[1];
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
+        const retry = BrowserMockWebSocket.all[1];
         retry.onopen?.({});
         expect(retry.controls()).toMatchObject([{ type: 'session.end', ...sameSession }]);
         expect(retry.envelopes()).toEqual([]);             // no input flushed
         retry.text({ type: 'session.ended' });
         visit();
-        expect(MockWebSocket.all).toHaveLength(2);         // confirmed: no further attempt
-        expect(MockWebSocket.all.flatMap(s => s.controls()).some(c => c.type === 'session.resume')).toBe(false);
+        expect(BrowserMockWebSocket.all).toHaveLength(2);         // confirmed: no further attempt
+        expect(BrowserMockWebSocket.all.flatMap(s => s.controls()).some(c => c.type === 'session.resume')).toBe(false);
     });
 
     it('ends it through the resume endpoint when away — unconfirmed until answered, flushing nothing, never resuming', () => {
@@ -374,7 +310,7 @@ describe('session resumption (client)', () => {
         client.send('queued while away');
         client.disconnect();
         expect(events).toEqual(['client.detached', 'client.disconnect']);
-        const end = MockWebSocket.all[1];
+        const end = BrowserMockWebSocket.all[1];
         expect(end.url).toBe('wss://relay.test/relay/resume');
         end.onopen?.({});
         expect(end.controls()).toMatchObject([{ type: 'session.end', ...sameSession }]);
@@ -383,32 +319,32 @@ describe('session resumption (client)', () => {
         end.drop();                                        // no reply: said so, and retried on the next foreground visit
         expect(warnings.join()).toMatch(/to end the game session, so the character may still be logged in/);
         visit();
-        const retry = MockWebSocket.all[2];
+        const retry = BrowserMockWebSocket.all[2];
         retry.onopen?.({});
         retry.text({ type: 'session.ended' });
         visit();
-        expect(MockWebSocket.all).toHaveLength(3);         // confirmed: nothing more
-        expect(MockWebSocket.all.flatMap(s => s.controls()).some(c => c.type === 'session.resume')).toBe(false);
+        expect(BrowserMockWebSocket.all).toHaveLength(3);         // confirmed: nothing more
+        expect(BrowserMockWebSocket.all.flatMap(s => s.controls()).some(c => c.type === 'session.resume')).toBe(false);
     });
 
     it('makes one automatic attempt per foreground visit, and none in the background', () => {
         enable();
         visibility('visible');
         ws.drop();                                         // visible: one attempt now
-        expect(MockWebSocket.all).toHaveLength(2);
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
         expect(client.resumeTransport()).toBe(true);       // coalesces with the one in flight
-        expect(MockWebSocket.all).toHaveLength(2);
-        MockWebSocket.all[1].drop();                       // failed without a verdict: no retry loop, but it is said
-        expect(MockWebSocket.all).toHaveLength(2);
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
+        BrowserMockWebSocket.all[1].drop();                       // failed without a verdict: no retry loop, but it is said
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
         expect(warnings.join()).toMatch(/to resume the game session/);
         visibility('hidden');
         document.dispatchEvent(new Event('visibilitychange'));
-        expect(MockWebSocket.all).toHaveLength(2);
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
         visibility('visible');
         document.dispatchEvent(new Event('visibilitychange'));
-        expect(MockWebSocket.all).toHaveLength(3);         // the next foreground visit gets exactly one more
-        MockWebSocket.all[2].onopen?.({});
-        MockWebSocket.all[2].text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: true });
+        expect(BrowserMockWebSocket.all).toHaveLength(3);         // the next foreground visit gets exactly one more
+        BrowserMockWebSocket.all[2].onopen?.({});
+        BrowserMockWebSocket.all[2].text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: true });
         expect(events.at(-1)).toBe('client.resumed');
     });
 
@@ -445,7 +381,7 @@ describe('session resumption (client)', () => {
     it('starts clean on an ordinary connect after a plain close', () => {
         ws.drop();
         client.connect();
-        const next = MockWebSocket.all[1];
+        const next = BrowserMockWebSocket.all[1];
         next.onopen?.({});
         next.raw('again\n');
         expect(shown).toBe('again\n');
@@ -466,13 +402,13 @@ describe('session resumption (client)', () => {
          *  the GA latches first, and the session is taken over so a loss is a
          *  detach rather than a plain disconnect. */
         const timed = () => {
-            MockWebSocket.all = [];                        // a fresh registry: this test's own client
+            BrowserMockWebSocket.all = [];                        // a fresh registry: this test's own client
             const bus = new EventBus<MudClientEvents>();
             const readings: number[] = [];
             bus.on('network.latency', (ms) => readings.push(ms));
             const c = new MudClient({ url: PROXY }, bus);
             c.connect();
-            const sock = MockWebSocket.all[0];
+            const sock = BrowserMockWebSocket.all[0];
             sock.onopen?.({});
             sock.text({ type: 'game.connected' });
             sock.text(OFFER);                              // taken over: the relay now holds the game through losses
@@ -482,9 +418,9 @@ describe('session resumption (client)', () => {
         };
 
         /** The reattached socket after a resume of the retained session. */
-        const resume = (c: MudClient, input: string, catchupEnd: string): MockWebSocket => {
+        const resume = (c: MudClient, input: string, catchupEnd: string): BrowserMockWebSocket => {
             c.resumeTransport();
-            const dial = MockWebSocket.all[1];
+            const dial = BrowserMockWebSocket.all[1];
             dial.onopen?.({});
             dial.text({ type: 'session.resumed', input, catchupEnd, backendConnected: false });
             return dial;
@@ -558,8 +494,8 @@ describe('session resumption (MudSession)', () => {
     let session: MudSession;
 
     beforeEach(() => {
-        vi.stubGlobal('WebSocket', MockWebSocket);
-        MockWebSocket.all = [];
+        vi.stubGlobal('WebSocket', BrowserMockWebSocket);
+        BrowserMockWebSocket.all = [];
         visibility('hidden');
         session = new MudSession();
     });
@@ -569,57 +505,44 @@ describe('session resumption (MudSession)', () => {
         visibility('visible');
     });
 
-    it('resumes on Connect instead of dialling, and never reports connected while away', () => {
-        session.connect(PROXY);
-        const ws = MockWebSocket.all[0];
+    /** By default the offer arrives before the proxy has reached the game. */
+    const connectRetained = (url = PROXY, gameConnected = false): BrowserMockWebSocket => {
+        session.connect(url);
+        const ws = BrowserMockWebSocket.all[BrowserMockWebSocket.all.length - 1];
         ws.onopen?.({});
-        ws.text({ type: 'game.connected' });
+        if (gameConnected) ws.text({ type: 'game.connected' });
         ws.text(OFFER);
-        ws.text(marker(0n, 0n));
+        ws.text(marker());
+        return ws;
+    };
+    const resume = (url = PROXY, backendConnected = true): BrowserMockWebSocket => {
+        session.connect(url);                               // the same Connect button, now a resume
+        const dial = BrowserMockWebSocket.all[BrowserMockWebSocket.all.length - 1];
+        dial.onopen?.({});
+        dial.text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected });
+        return dial;
+    };
+
+    it('resumes on Connect instead of dialling, and never reports connected while away', () => {
+        const ws = connectRetained(PROXY, true);
         expect(session.status).toBe('connected');
         ws.drop();
         expect(session.status).toBe('connecting');         // never 'connected' while away, and Disconnect stays available
         expect(session.transportDetached()).toBe(true);    // so a typed line stays a draft
 
-        session.connect(PROXY);                            // the same button, now a resume
+        resume();
         expect(session.dialCount).toBe(1);
-        const dial = MockWebSocket.all[1];
-        dial.onopen?.({});
-        dial.text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: true });
         expect(session.status).toBe('connected');
         expect(session.transportDetached()).toBe(false);
-        expect(MockWebSocket.all).toHaveLength(2);
+        expect(BrowserMockWebSocket.all).toHaveLength(2);
     });
 
-    it('stays connecting after a resume until the game itself has connected', () => {
-        session.connect(PROXY);
-        const ws = MockWebSocket.all[0];
-        ws.onopen?.({});
-        ws.text(OFFER);                                    // the offer comes before the proxy has reached the game
-        ws.text(marker(0n, 0n));
-        ws.drop();
-        session.connect(PROXY);
-        const dial = MockWebSocket.all[1];
-        dial.onopen?.({});
-        dial.text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: false });
-        expect(session.status).toBe('connecting');         // nothing has reached the game yet
-        dial.text({ type: 'game.connected' });
-        expect(session.status).toBe('connected');
-    });
-
-    it('re-asserts connecting, never connected, when a resumed session has not reached the game', () => {
-        session.connect(PROXY);
-        const ws = MockWebSocket.all[0];
-        ws.onopen?.({});
-        ws.text(OFFER);
-        ws.text(marker(0n, 0n));
+    it('stays connecting and re-asserts it after a resume until the game itself has connected', () => {
+        const ws = connectRetained();
         ws.drop();
         const heard: string[] = [];
         session.events.on('status', (status) => heard.push(status));
-        session.connect(PROXY);                            // the same button: a resume
-        const dial = MockWebSocket.all[1];
-        dial.onopen?.({});
-        dial.text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: false });
+        const dial = resume(PROXY, false);
         expect(session.status).toBe('connecting');         // nothing has reached the game
         expect(heard).toEqual(['connecting']);             // the resume said so itself, for every listener
         dial.text({ type: 'game.connected' });
@@ -630,20 +553,13 @@ describe('session resumption (MudSession)', () => {
         const authed = 'wss://relay.test/auth?token=abc.123&keep=1&keep=2&host=game.test&port=23'
             + '&tls=1&tlsIgnoreExpired=1&tlsIgnoreSelfSigned=1&tlsIgnoreAll=1';
         const endpoint = 'wss://relay.test/auth/resume?token=abc.123&keep=1&keep=2';
-        session.connect(authed);
-        const ws = MockWebSocket.all[0];
-        ws.onopen?.({});
-        ws.text(OFFER);
-        ws.text(marker(0n, 0n));
+        const ws = connectRetained(authed);
         ws.drop();
-        session.connect(authed);                           // the same proxy: now a resume
-        const dial = MockWebSocket.all[1];
+        const dial = resume(authed);
         expect(dial.url).toBe(endpoint);                   // the auth query rode along; the game's own parameters did not
-        dial.onopen?.({});
-        dial.text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: true });
         dial.drop();
         session.connect('wss://relay.test/auth?token=abc.123&keep=1&keep=2&host=elsewhere.test&port=4000');
-        const end = MockWebSocket.all[2];                  // a different target: the retained session ends, not resumes
+        const end = BrowserMockWebSocket.all[2];                  // a different target: the retained session ends, not resumes
         expect(end.url).toBe(endpoint);                    // and the offline end keeps the credential, never the game's parameters
         end.onopen?.({});
         expect(end.controls()).toMatchObject([{ type: 'session.end', ...sameSession }]);
@@ -653,44 +569,29 @@ describe('session resumption (MudSession)', () => {
         const secure = `${PROXY}&tls=1`;
         const established: unknown[] = [];
         session.events.on('tls.established', info => established.push(info));
-        session.connect(secure);
-        const ws = MockWebSocket.all[0];
-        ws.onopen?.({});
-        ws.text(OFFER);                                    // the proxy offers before it has reached the game
-        ws.text(marker(0n, 0n));
-        ws.drop();                                         // and the page loses it before the handshake is done
+        const ws = connectRetained(secure);
+        ws.drop();                                         // the page loses it before the handshake is done
         expect(session.gameTransportSecure).toBe(false);
-        const resume = (): MockWebSocket => {
-            session.connect(secure);                       // the same button, now a resume
-            const dial = MockWebSocket.all[MockWebSocket.all.length - 1];
-            dial.onopen?.({});
-            dial.text({ type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: true });
-            dial.text({ type: 'tls.established', protocol: 'TLSv1.3', acceptedDespite: [] });   // told again, as the relay does on every resume
-            return dial;
-        };
-        const dial = resume();
+        const dial = resume(secure);
+        dial.text({ type: 'tls.established', protocol: 'TLSv1.3', acceptedDespite: [] });       // told again, as the relay does on every resume
         expect(session.gameTransportSecure).toBe(true);
         expect(established).toHaveLength(1);
         dial.drop();
-        resume();
+        const again = resume(secure);
+        again.text({ type: 'tls.established', protocol: 'TLSv1.3', acceptedDespite: [] });
         expect(session.gameTransportSecure).toBe(true);
         expect(established).toHaveLength(1);               // told twice, said once
     });
 
     it('dials a different target afresh, ending the retained session rather than resuming it', () => {
-        session.connect(PROXY);
-        const ws = MockWebSocket.all[0];
-        ws.onopen?.({});
-        ws.text({ type: 'game.connected' });
-        ws.text(OFFER);
-        ws.text(marker(0n, 0n));
+        const ws = connectRetained(PROXY, true);
         ws.drop();
 
         const other = 'wss://relay.test/relay?host=other.test&port=23';
         session.connect(other);
         expect(session.dialCount).toBe(2);
-        expect(MockWebSocket.all.map(s => s.url)).toEqual([PROXY, 'wss://relay.test/relay/resume', other]);
-        const end = MockWebSocket.all[1];
+        expect(BrowserMockWebSocket.all.map(s => s.url)).toEqual([PROXY, 'wss://relay.test/relay/resume', other]);
+        const end = BrowserMockWebSocket.all[1];
         end.onopen?.({});
         expect(end.controls()).toMatchObject([{ type: 'session.end', ...sameSession }]);
     });
