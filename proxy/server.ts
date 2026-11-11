@@ -1,10 +1,16 @@
 import * as http from 'http';
 import * as net from 'net';
 import * as tls from 'tls';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 import { armGameKeepAlive } from './gameSocket';
+import { RESUME_PATH, MAX_RESUMABLE_SESSIONS, DEFAULT_RESUME_ORIGIN, RESUME_ORIGINS, RelaySession, acceptResume } from './sessions';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
+
+// Opt-in: with SESSION_RESUME=1 the relay offers each new connection a session
+// that survives losing its browser socket (see sessions.ts). Unset, every byte
+// and every close is exactly what this proxy has always done.
+const resumeEnabled = process.env.SESSION_RESUME === '1';
 
 const CORS_HEADERS: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
@@ -49,7 +55,7 @@ const STRIPPED_REQUEST_HEADERS = new Set([
     'keep-alive', 'transfer-encoding', 'upgrade', 'content-length',
 ]);
 
-const server = http.createServer(async (req, res) => {
+export const server = http.createServer(async (req, res) => {
     const reqUrl = req.url ?? '/';
     const parsed = new URL(reqUrl, 'http://localhost');
 
@@ -136,7 +142,7 @@ async function forwardHttp(req: http.IncomingMessage, res: http.ServerResponse, 
     res.end();
 }
 
-async function readRequestBody(req: http.IncomingMessage): Promise<Buffer> {
+async function readRequestBody(req: http.IncomingMessage): Promise<Buffer<ArrayBuffer>> {
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
         chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk as Buffer);
@@ -145,26 +151,6 @@ async function readRequestBody(req: http.IncomingMessage): Promise<Buffer> {
 }
 
 const wss = new WebSocketServer({ server });
-
-// WebSocket close.reason is capped at 123 bytes by the spec; trim defensively.
-function clipReason(text: string): string {
-    return text.length > 120 ? text.slice(0, 120) : text;
-}
-
-function safeClose(ws: WebSocket, code: number, reason: string): void {
-    if (ws.readyState === WebSocket.OPEN) {
-        try { ws.close(code, clipReason(reason)); } catch { /* ignore */ }
-    }
-}
-
-/** Out-of-band control message to the client. Sent as a **text** frame; MUD
- *  bytes always travel as binary frames, so the client can route the two apart
- *  without an envelope. Proxies predating TLS support simply never send these,
- *  which is what lets the client detect an out-of-date proxy. */
-function sendControl(ws: WebSocket, payload: unknown): void {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    try { ws.send(JSON.stringify(payload)); } catch { /* ignore */ }
-}
 
 interface TlsPrefs {
     enabled: boolean;
@@ -266,7 +252,16 @@ function certProblems(socket: tls.TLSSocket, host: string, cert: tls.PeerCertifi
 
 wss.on('connection', (ws, req) => {
     const reqUrl = req.url ?? '/';
-    const params = new URL(reqUrl, 'http://localhost').searchParams;
+    const url = new URL(reqUrl, 'http://localhost');
+    const origin = req.headers.origin ?? null;
+
+    // The reattachment endpoint never dials a backend; see acceptResume.
+    if (resumeEnabled && url.pathname.endsWith(`/${RESUME_PATH}`)) {
+        acceptResume(ws, origin);
+        return;
+    }
+
+    const params = url.searchParams;
     const host = params.get('host');
     const port = parseInt(params.get('port') ?? '23', 10);
 
@@ -287,6 +282,12 @@ wss.on('connection', (ws, req) => {
         ignoreAll: boolParam(params, 'tlsIgnoreAll'),
     };
 
+    // The frontend's side of this connection: the plain proxy until the client
+    // accepts the resume offer, then the owner of the game link (sessions.ts).
+    // Admission precedes reservations; unlisted origins still get the plain proxy.
+    const resumeOffer = resumeEnabled && RESUME_ORIGINS.has((origin ?? '').trim());
+    const session = new RelaySession(ws, origin, resumeOffer);
+
     console.log(`[proxy] Connecting to ${host}:${port}${tlsPrefs.enabled ? ' (TLS)' : ''}`);
 
     let tcp: net.Socket;
@@ -304,20 +305,19 @@ wss.on('connection', (ws, req) => {
             if (blocking.length > 0) {
                 const codes = blocking.map(p => p.code).join(', ');
                 console.warn(`[proxy] TLS cert rejected for ${host}:${port}: ${codes}`);
-                sendControl(ws, {
+                session.control({
                     type: 'tls.error',
                     code: blocking[0].code,
                     message: blocking.map(p => p.message).join('; '),
                     codes: blocking.map(p => p.code),
                     cert: describeCert(cert),
                 });
-                safeClose(ws, 1011, `Proxy: TLS certificate rejected: ${codes}`);
-                secure.destroy();
+                session.close(1011, `Proxy: TLS certificate rejected: ${codes}`);
                 return;
             }
             console.log(`[proxy] Connected to ${host}:${port} over ${secure.getProtocol() ?? 'TLS'}`);
-            sendControl(ws, { type: 'game.connected' });
-            sendControl(ws, {
+            session.gameConnected();
+            session.control({
                 type: 'tls.established',
                 protocol: secure.getProtocol() ?? '',
                 cipher: secure.getCipher()?.name ?? '',
@@ -338,55 +338,37 @@ wss.on('connection', (ws, req) => {
             // accepted me" on its own. Say which one just happened, so
             // auto-reconnect measures the session against the game's socket
             // rather than the proxy's (issue #130).
-            sendControl(ws, { type: 'game.connected' });
+            session.gameConnected();
         });
     }
+    session.tcp = tcp;
 
-    tcp.on('data', (chunk: Buffer) => {
-        if (ws.readyState === WebSocket.OPEN) {
-            // Binary frame — raw bytes, no base64 (matches the client + worker).
-            ws.send(chunk, { binary: true });
-        }
-    });
+    // Binary frames, raw bytes — no base64 (matches the client + worker).
+    tcp.on('data', (chunk: Buffer) => session.fromGame(chunk));
 
     tcp.on('error', (err: NodeJS.ErrnoException) => {
         console.error(`[proxy] TCP error for ${host}:${port}: ${err.message}`);
         const phase = tcpConnected ? 'TCP error' : `connect to ${host}:${port} failed`;
         const reason = err.code ? `Proxy: ${phase}: ${err.code}` : `Proxy: ${phase}: ${err.message}`;
-        safeClose(ws, 1011, reason);
+        session.close(1011, reason);
     });
 
     tcp.on('close', () => {
         console.log(`[proxy] TCP closed for ${host}:${port}`);
-        safeClose(ws, 1000, 'TCP connection closed');
+        session.close(1000, 'TCP connection closed');
     });
 
-    ws.on('message', (data) => {
-        if (!tcp.writable) return;
-        try {
-            // Client sends binary frames; `data` is a Buffer (or fragments).
-            const bytes = Array.isArray(data)
-                ? Buffer.concat(data)
-                : Buffer.isBuffer(data)
-                    ? data
-                    : Buffer.from(data as ArrayBuffer);
-            tcp.write(bytes);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error('[proxy] Failed to forward message:', message);
-            safeClose(ws, 1011, `Proxy: TCP write error: ${message}`);
-            tcp.destroy();
-        }
-    });
+    // Client frames are binary (a Buffer, or fragments).
+    ws.on('message', (data, isBinary) => session.fromClient(ws, data, isBinary));
 
     ws.on('close', () => {
         console.log(`[proxy] WebSocket closed for ${host}:${port}`);
-        tcp.destroy();
+        session.frontClosed(ws);
     });
 
     ws.on('error', (err) => {
         console.error(`[proxy] WebSocket error: ${err.message}`);
-        tcp.destroy();
+        session.frontClosed(ws);
     });
 });
 
@@ -395,4 +377,8 @@ server.listen(PORT, () => {
     console.log(`[proxy] Usage: connect with ws://localhost:${PORT}?host=<mud-host>&port=<mud-port>`);
     console.log(`[proxy] Example: ws://localhost:${PORT}?host=aardmud.org&port=23`);
     console.log(`[proxy] TLS:     add &tls=1 (optionally &tlsIgnoreExpired=1, &tlsIgnoreSelfSigned=1, &tlsIgnoreAll=1)`);
+    if (resumeEnabled) {
+        const origins = [...RESUME_ORIGINS].join(', ') || 'none';
+        console.log(`[proxy] Resume:  origins ${origins} (SESSION_RESUME_ORIGINS, default ${DEFAULT_RESUME_ORIGIN}), endpoint /${RESUME_PATH}, limit ${MAX_RESUMABLE_SESSIONS}`);
+    }
 });

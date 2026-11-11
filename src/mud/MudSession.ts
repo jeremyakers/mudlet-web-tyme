@@ -218,6 +218,20 @@ export class MudSession {
         // raises sysDisconnectionEvent. A lost connection is the other way
         // round — see the `client.disconnected` subscription below.
         this.events.on('client.connect', () => { this.setStatus('connected'); this.announceConnected(); });
+        // A transport lost while the proxy holds the game session is no
+        // disconnect — no sysDisconnectionEvent, no notice — but nothing claims
+        // connected while it is away: it reads as connecting (so Disconnect stays
+        // available to end the session), and a resume is not a new connection.
+        // It is connected again only if the game was ever reached: a session
+        // offered before the proxy got there resumes still connecting, and
+        // `client.connect` says when it does.
+        this.events.on('client.detached', () => { this.setStatus('connecting'); this.setPing(null); });
+        this.events.on('client.resumed', () => this.setStatus(this.connectedAt !== null ? 'connected' : 'connecting'));
+        // A held game session that failed for good (a refused resume, say) is no
+        // drop to recover from: the stock auto-reconnect must not quietly dial a
+        // new game — a new login — in its place. Connect is the player's call,
+        // and clears this like any other dontReconnect.
+        this.events.on('client.sessionFailed', () => { this.dontReconnect = true; });
         // A CHARSET exchange decides what encoding the session reads its game in,
         // and the answer belongs to the profile rather than to the socket that
         // happened to negotiate it. Subscribed here, for the session's lifetime:
@@ -294,7 +308,16 @@ export class MudSession {
     /** The number of dials so far — see {@link dialedUrl}. */
     get dialCount(): number { return this.dials; }
 
+    /** Whether typed input should wait as a draft: the transport is away but the
+     *  proxy still holds the game session. */
+    transportDetached(): boolean {
+        return this.client?.transportDetached() ?? false;
+    }
+
     connect(url: string): void {
+        // Connect to the same game while the proxy still holds its session
+        // resumes it: a fresh dial would be a new login.
+        if (url === this.lastUrl && this.client?.resumeTransport()) return;
         this.lastUrl = url;
         this.dials += 1;
         // A running replay feeds the same parsing pipeline the live socket is

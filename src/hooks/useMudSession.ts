@@ -5,6 +5,8 @@ export function useMudSession(options?: MudSessionOptions) {
     const [session, setSession] = useState(() => new MudSession(options));
 
     const [status, setStatus] = useState<SessionStatus>('disconnected');
+    // Detachment can change while status stays `connecting`; it must render independently.
+    const [detached, setDetached] = useState(false);
     const [ping, setPing] = useState<number | null>(null);
     const [passwordMode, setPasswordMode] = useState(false);
 
@@ -17,10 +19,15 @@ export function useMudSession(options?: MudSessionOptions) {
             return;
         }
         const offStatus = session.events.on('status', setStatus);
+        const offDetach = session.events.on('client.detached', () => setDetached(true));
+        const offBack   = session.events.on('client.resumed', () => setDetached(false));
+        const offDrop   = session.events.on('client.disconnect', () => setDetached(false));
+        // A session swapped in under StrictMode is never away.
+        setDetached(session.transportDetached());
         const offPing   = session.events.on('ping', setPing);
         const offEcho   = session.events.on('telnet.echo', setPasswordMode);
         return () => {
-            offStatus(); offPing(); offEcho();
+            offStatus(); offDetach(); offBack(); offDrop(); offPing(); offEcho();
             session.destroy();
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -33,5 +40,5 @@ export function useMudSession(options?: MudSessionOptions) {
         [session],
     );
 
-    return { session, status, ping, passwordMode, connect, disconnect, send };
+    return { session, status, ping, passwordMode, transportDetached: detached, connect, disconnect, send };
 }

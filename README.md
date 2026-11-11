@@ -76,6 +76,8 @@ yarn
 yarn start    # listens on ws://localhost:3001 by default
 ```
 
+Start it with `SESSION_RESUME=1` and a player's game connection survives a lost browser connection (a phone's screen lock, a network change): the client reattaches to the same game session instead of logging in again. Offers go only to browser origins in `SESSION_RESUME_ORIGINS` (exact, comma-separated; unset default `https://web.mudlet.org`, the official hosted client, empty value meaning none) — self-hosting the web client? Append your own site, and `http://localhost:5173` while testing, to offer retention from it. Every connection the proxy offers a session counts against `SESSION_RESUME_MAX` (default 32), reserved with the offer: a plain connection's reservation goes when its socket closes, and a session that took the game over keeps its reservation until the session ends — so beyond the limit new connections play exactly as they would with `SESSION_RESUME` unset, and nothing already held is ever ended to make room. An origin gates the offer, not the session: a reattachment still needs the session id, secret and the origin pinned at the offer, and a client without an `Origin` header always plays the plain proxy.
+
 Then choose **MUD (host:port)** mode when creating a connection. Servers that expose a native WebSocket endpoint don't need the proxy — use **WebSocket** mode and point it straight at the `ws(s)://` URL.
 
 ### Already play in desktop Mudlet?

@@ -22,6 +22,7 @@ import { useClientField } from '../storage';
 interface ToolbarProps {
     connectionName: string;
     status: SessionStatus;
+    transportDetached?: boolean;
     ping: number | null;
     onDisconnect: () => void;
     onReconnect: () => void;
@@ -135,7 +136,7 @@ function useBrandCommands(commands: BrandCommand[] | undefined, ctx: BrandToolba
     }, [commands, ctx?.connectionId]);
 }
 
-export function Toolbar({ connectionName, status, ping, onDisconnect, onReconnect, onNewConnection, onOpenMap, mapDisabled = false, onOpenScripts, onOpenFiles, onOpenNotepad, onOpenLogs, onOpenDocs, onOpenHelp, onOpenSettings, onOpenAbout, onFocusInputLine, replayRecording, onToggleReplayRecording, replaySpeed, onReplaySpeedChange, onReplayStop, onContextMenu, brandContext, addonCommands, addonMenuCommands, onAddonCommandClick }: ToolbarProps) {
+export function Toolbar({ connectionName, status, transportDetached = false, ping, onDisconnect, onReconnect, onNewConnection, onOpenMap, mapDisabled = false, onOpenScripts, onOpenFiles, onOpenNotepad, onOpenLogs, onOpenDocs, onOpenHelp, onOpenSettings, onOpenAbout, onFocusInputLine, replayRecording, onToggleReplayRecording, replaySpeed, onReplaySpeedChange, onReplayStop, onContextMenu, brandContext, addonCommands, addonMenuCommands, onAddonCommandClick }: ToolbarProps) {
     const [menuOpen, setMenuOpen] = useState(false);
     const hamburgerRef = useRef<HTMLDivElement>(null);
     const hamburgerMenuRef = useRef<HTMLDivElement>(null);
@@ -562,13 +563,14 @@ export function Toolbar({ connectionName, status, ping, onDisconnect, onReconnec
     );
     // The name is the row's flexible middle: it takes the slack, which pushes
     // the dot and the ping (and, in a single-row layout, the buttons) right.
+    const statusLabel = transportDetached ? 'Connection interrupted; game session retained. Use Connect to resume.' : status;
     const statusBlock = (
         <>
             <span className="toolbar-connection-name">{connectionName}</span>
             <span
                 className={`status-dot status-${status}`}
-                title={status}
-                aria-label={status}
+                title={statusLabel}
+                aria-label={statusLabel}
             />
             {ping !== null && (
                 <span className="ping">{Math.round(ping)} ms</span>

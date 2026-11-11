@@ -41,6 +41,10 @@ class MockWebSocket {
 
 const TLS_URL = 'ws://proxy.invalid/?host=mud.example.org&port=4443&tls=1';
 const PLAIN_URL = 'ws://proxy.invalid/?host=mud.example.org&port=23';
+const OFFER = { type: 'session.offer', versions: [1], offerId: 'offer-1' };
+/** A session the mock relay took over from cursors (0, 0). */
+const MARKER = { type: 'session.enabled', sessionId: 'session-1', secret: 'c2VjcmV0', resumePath: 'resume', input: '0', output: '0' };
+const RESUMED = { type: 'session.resumed', input: '0', catchupEnd: '0', backendConnected: false };
 
 describe('proxy TLS control frames', () => {
     let realWebSocket: unknown;
@@ -171,6 +175,88 @@ describe('proxy TLS control frames', () => {
             expect(timeouts).toHaveLength(0);   // still within the grace period
             vi.advanceTimersByTime(2_000);
 
+            expect(timeouts).toEqual([{ host: 'mud.example.org', port: 4443 }]);
+        });
+
+        it('policing survives a detached transport and restarts its standard grace on resume', () => {
+            const { client, sock, bus } = connected();
+            const timeouts: unknown[] = [];
+            bus.on('tls.timeout', (i) => timeouts.push(i));
+
+            sock.deliverControl(OFFER);
+            sock.deliverControl(MARKER);                        // the session is retained; the handshake is still open
+            sock.closeWith({ code: 1006 });                     // the phone loses its network
+            vi.advanceTimersByTime(120_000);
+            expect(timeouts).toHaveLength(0);                   // nothing is policed while away — and the deadline was not lost with the transport
+
+            client.resumeTransport();
+            const dial = MockWebSocket.instances[1];
+            dial.onopen?.({});
+            dial.deliverControl(RESUMED);
+            vi.advanceTimersByTime(11_000);
+            expect(timeouts).toHaveLength(0);                   // still within the standard grace
+            vi.advanceTimersByTime(1_000);
+            expect(timeouts).toEqual([{ host: 'mud.example.org', port: 4443 }]);   // said once, as an attached silent handshake always was
+        });
+
+        it('restored policing settles on a verdict seen during the catch-up, with no late warning', () => {
+            const { client, sock, bus } = connected();
+            const timeouts: unknown[] = [];
+            bus.on('tls.timeout', (i) => timeouts.push(i));
+
+            sock.deliverControl(OFFER);
+            sock.deliverControl(MARKER);
+            sock.closeWith({ code: 1006 });
+            client.resumeTransport();
+            const dial = MockWebSocket.instances[1];
+            dial.onopen?.({});
+            dial.deliverControl(RESUMED);
+            dial.deliverControl({ type: 'tls.established', cert: null });   // the verdict replays, mid catch-up
+            vi.advanceTimersByTime(120_000);
+            expect(timeouts).toHaveLength(0);
+            dial.deliverControl({ type: 'tls.established', cert: null });   // a repeated verdict is idempotent
+            vi.advanceTimersByTime(120_000);
+            expect(timeouts).toHaveLength(0);
+        });
+
+        it('a settled handshake is not policed again after a detach and resume', () => {
+            const { client, sock, bus } = connected();
+            const timeouts: unknown[] = [];
+            bus.on('tls.timeout', (i) => timeouts.push(i));
+
+            sock.deliverControl(OFFER);
+            sock.deliverControl(MARKER);
+            sock.deliverControl({ type: 'tls.established', cert: null });   // the handshake was settled while attached
+            sock.closeWith({ code: 1006 });
+            client.resumeTransport();
+            const dial = MockWebSocket.instances[1];
+            dial.onopen?.({});
+            dial.deliverControl(RESUMED);
+            vi.advanceTimersByTime(120_000);
+            expect(timeouts).toHaveLength(0);
+        });
+
+        it('repeated cuts leave no stale timer running, and the next attach polices again', () => {
+            const { client, sock, bus } = connected();
+            const timeouts: unknown[] = [];
+            bus.on('tls.timeout', (i) => timeouts.push(i));
+
+            sock.deliverControl(OFFER);
+            sock.deliverControl(MARKER);
+            sock.closeWith({ code: 1006 });                     // cut one
+            client.resumeTransport();
+            const dial = MockWebSocket.instances[1];
+            dial.onopen?.({});
+            dial.deliverControl(RESUMED);                       // attached again: the standard grace is armed
+            dial.closeWith({ code: 1006 });                     // cut two
+            vi.advanceTimersByTime(120_000);
+            expect(timeouts).toHaveLength(0);                   // the rearmed timer does not fire while away
+
+            client.resumeTransport();
+            const dial2 = MockWebSocket.instances[2];
+            dial2.onopen?.({});
+            dial2.deliverControl(RESUMED);
+            vi.advanceTimersByTime(12_000);
             expect(timeouts).toEqual([{ host: 'mud.example.org', port: 4443 }]);
         });
 

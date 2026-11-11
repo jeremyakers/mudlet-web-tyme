@@ -49,6 +49,7 @@ import type { MudClientEvents, TlsEstablished, TlsError } from "../events";
 import { LineAssembler } from "./LineAssembler";
 import { TelnetNegotiator, type TelnetNegotiatorFlags } from "./TelnetNegotiator";
 import { SubnegotiationRepair } from "./SubnegotiationRepair";
+import { ResumableSocket } from "./ResumableSocket";
 import {
     debugFramesEnabled,
     debugGaEnabled,
@@ -310,7 +311,7 @@ function yieldToEventLoop(fn: () => void): void {
 export class MudClient {
     /** The live WebSocket, or null when there is none — before the first
      *  connect, and from the moment disconnect() lets go of one. */
-    private socket: WebSocket | null = null;
+    private socket: ResumableSocket | null = null;
     private readonly eventBus: EventBus<MudClientEvents>;
     private readonly chunkProcessor: ChunkProcessor;
     private messageBuffer: { text: string; type: string }[] = [];
@@ -339,6 +340,9 @@ export class MudClient {
      *  while ECHO+SGA are active and cancelled if the server releases ECHO
      *  first. Null when nothing is in flight. */
     private charModeTimer: ReturnType<typeof setTimeout> | null = null;
+    /** The window ran out while the transport was away, when nothing is parsed:
+     *  decided on resume, once the queue has been. */
+    private charModeDue = false;
     /** Byte↔char codec for the session (inbound streaming decoder + outgoing
      *  encoding). Swapped between encodings by the CHARSET handler. */
     private readonly codec = new SessionCodec();
@@ -364,6 +368,9 @@ export class MudClient {
      *  burst, so a queued speedwalk isn't credited with the replies to its
      *  earlier steps. */
     private latencyStartedAt: number | null = null;
+
+    /** A held game command starts its latency clock after the transport submits it. */
+    private latencyPending = false;
 
     /** Set when this dial asked the proxy for TLS (`&tls=1` in the URL), so the
      *  client knows to expect a `tls.established` control frame and to police
@@ -612,6 +619,7 @@ export class MudClient {
         if (this.charModeTimer !== null) clearTimeout(this.charModeTimer);
         this.charModeTimer = setTimeout(() => {
             this.charModeTimer = null;
+            if (this.socket?.away) { this.charModeDue = true; return; }
             // An ECHO release the game already sent may still be queued.
             this.drainInbound();
             this.checkCharacterModePattern();
@@ -714,6 +722,8 @@ export class MudClient {
     }
 
     connect(): void {
+        // A game session the proxy still holds is resumed, never dialled afresh.
+        if (this.resumeTransport()) return;
         // What the last socket already delivered goes through first, as it
         // would have before anything else could run on desktop. A trigger
         // there that dialled already did what this call was asked to.
@@ -729,6 +739,8 @@ export class MudClient {
             this.socket.onclose = null;
             this.socket.onerror = null;
             this.socket.onopen = null;
+            this.socket.ondetach = null;
+            this.socket.onresume = null;
         }
         this.mccpHandler.reset();
         this.echoHandler.reset();
@@ -738,6 +750,7 @@ export class MudClient {
         this.negotiator.reset();
         this.subnegRepair.reset();
         this.charModeDetected = false;
+        this.charModeDue = false;
         this.cancelCharacterModeDetection();
         this.latencyStartedAt = null;
         // Redialling re-runs the handshake, so the previous verdict is stale.
@@ -753,17 +766,41 @@ export class MudClient {
         }
 
         try {
-            // Advertise subprotocols only when configured — passing an empty
-            // array still sends an (empty) Sec-WebSocket-Protocol header, so omit
-            // the argument entirely in the common case to keep the bare handshake.
-            this.socket = this.subprotocols.length > 0
-                ? new WebSocket(this.url, this.subprotocols)
-                : new WebSocket(this.url);
-            // Receive raw binary frames instead of base64 text. The proxy worker
-            // sends bytes directly; decoding base64 on every frame was the bulk
-            // of its (and our) per-message CPU cost.
-            this.socket.binaryType = "arraybuffer";
+            this.socket = new ResumableSocket(this.url, this.subprotocols);
             const socket = this.socket;
+            // A transport lost while the proxy holds the game session is not a
+            // disconnect: parsing state stays and no login or reconnect chain
+            // runs (MudSession keeps the status off `connected` meanwhile).
+            socket.ondetach = () => {
+                this.stopIdleProbe();
+                this.suspendTlsDeadline();         // the pause was never a TLS verdict; the deadline resumes below
+                this.latencyStartedAt = null;      // an outage is not a reply; a pending clock does not span it
+                this.latencyPending = false;
+                this.eventBus.emit('client.detached');
+            };
+            socket.onresume = () => {
+                this.armIdleProbe(IDLE_PROBE_MS);
+                this.armTlsDeadline();             // still unresolved: police again from the reattach
+                if (this.latencyPending) {         // the held command just went out with the catch-up done: clock it here
+                    this.latencyPending = false;
+                    this.beginLatencyMeasurement();
+                }
+                this.eventBus.emit('client.resumed');
+                if (this.charModeDue) {                    // as the timer would have, the queue first
+                    this.charModeDue = false;
+                    this.drainInbound();
+                    this.checkCharacterModePattern();
+                }
+                this.pumpInbound();
+            };
+            // Said when an attempt really fails — including the end of a session
+            // the player already hung up on, which outlives this client's hold
+            // on the socket.
+            socket.onunreachable = () => {
+                this.eventBus.emit('client.warning', socket.endPending
+                    ? '[ WARN  ]  - The proxy could not be reached to end the game session, so the character may still be logged in. It is retried when this page is next visible.\n'
+                    : '[ WARN  ]  - The proxy could not be reached to resume the game session, which it still holds. Use Connect to try again, or Disconnect to end it.\n');
+            };
 
             this.socket.onmessage = (event: MessageEvent<ArrayBuffer | string>) => {
                 const receivedAt = performance.now();
@@ -813,6 +850,11 @@ export class MudClient {
                 }
                 this.resolveTls();
                 this.assembler.flush(Date.now(), true);
+                // Before the close and the disconnect it precedes, so a listener
+                // can raise dontReconnect in time for the auto-reconnect to see it.
+                if (socket.failed) this.eventBus.emit('client.sessionFailed');
+                this.latencyStartedAt = null;
+                this.latencyPending = false;
                 this.eventBus.emit('close', event);
                 if (isAbnormalClose(event)) {
                     this.eventBus.emit('client.error', formatCloseError(event, this.opened, this.viaProxy));
@@ -842,19 +884,7 @@ export class MudClient {
                             selected ? `'${selected}'` : '(none)');
                     }
                 }
-                // A TLS failure is not reliably reportable: an out-of-date proxy
-                // ignores `&tls=1` and opens a plaintext socket to a port that
-                // will never answer, and a Cloudflare-Worker proxy whose peer
-                // cert is rejected goes silent indefinitely (measured: no error,
-                // no close). Either way the symptom is the same — nothing ever
-                // arrives — so treat prolonged silence as the failure signal.
-                if (this.tlsRequested && !this.tlsResolved && this.tlsDeadline === null) {
-                    this.tlsDeadline = setTimeout(() => {
-                        this.tlsDeadline = null;
-                        if (this.tlsResolved) return;
-                        this.eventBus.emit('tls.timeout', parseHostPort(this.url));
-                    }, TLS_HANDSHAKE_TIMEOUT_MS);
-                }
+                if (this.tlsRequested) this.armTlsDeadline();
                 this.eventBus.emit('open', event);
                 // A direct websocket has only one leg, so opening it *is*
                 // reaching the game. Through a proxy it is not: the proxy
@@ -902,10 +932,25 @@ export class MudClient {
     /** Stop policing the TLS deadline — the handshake is accounted for. */
     private resolveTls(): void {
         this.tlsResolved = true;
-        if (this.tlsDeadline !== null) {
-            clearTimeout(this.tlsDeadline);
+        this.suspendTlsDeadline();
+    }
+
+    /** Stop the running deadline without settling the handshake: a detached
+     *  transport was never a TLS verdict, and policing restarts on the resume. */
+    private suspendTlsDeadline(): void {
+        if (this.tlsDeadline === null) return;
+        clearTimeout(this.tlsDeadline);
+        this.tlsDeadline = null;
+    }
+
+    /** Reuse the TLS-silence warning while attached: some proxies never report failure. */
+    private armTlsDeadline(): void {
+        if (!this.tlsRequested || this.tlsResolved || this.tlsDeadline !== null) return;
+        this.tlsDeadline = setTimeout(() => {
             this.tlsDeadline = null;
-        }
+            if (this.tlsResolved) return;
+            this.eventBus.emit('tls.timeout', parseHostPort(this.url));
+        }, TLS_HANDSHAKE_TIMEOUT_MS);
     }
 
     /** Decode one proxy control frame. Anything unrecognised is ignored so a
@@ -928,6 +973,9 @@ export class MudClient {
 
         if (msg.type === 'tls.established') {
             this.resolveTls();
+            // A resumed session says this again, in case the first was lost with
+            // the transport: the same link is secure once, not once per resume.
+            if (this.tlsEstablishedThisSocket) return;
             this.tlsEstablishedThisSocket = true;
             // A completed handshake is a connected socket by definition, so an
             // older proxy that sends only this one still dates the session.
@@ -1024,6 +1072,19 @@ export class MudClient {
         this.finishDisconnect();
     }
 
+    /** True while the proxy still holds the game session but the transport is
+     *  gone or catching up: typed input stays a draft, and Connect resumes. */
+    transportDetached(): boolean {
+        return this.socket?.away ?? false;
+    }
+
+    /** Reattach to the game session the proxy still holds. True when there is
+     *  one — also when an attempt is already under way — so a caller never dials
+     *  a second game. */
+    resumeTransport(): boolean {
+        return this.socket?.resume() ?? false;
+    }
+
     /** A disconnect() whose events are still waiting on unwritten output. */
     private pendingDisconnect: ReturnType<typeof setTimeout> | null = null;
 
@@ -1042,6 +1103,7 @@ export class MudClient {
         this.cancelCharacterModeDetection();
         this.stopIdleProbe();
         this.latencyStartedAt = null;
+        this.latencyPending = false;
     }
 
     private armIdleProbe(delay: number): void {
@@ -1166,16 +1228,26 @@ export class MudClient {
 
     /** Start timing a command's round trip — only once the server has shown it
      *  marks prompts (GA/EOR latched), since without a marker there is no
-     *  "reply arrived" to stop at. See {@link latencyStartedAt}. */
+     *  "reply arrived" to stop at. See {@link latencyStartedAt}. While the
+     *  transport is away the bytes are held, so the clock waits for their
+     *  reattached send instead of covering the outage. */
     private beginLatencyMeasurement(): void {
         if (this.latencyStartedAt !== null || this.forceGaOff || !this.assembler.gaDriver) return;
+        if (this.socket?.away) {
+            this.latencyPending = true;
+            return;
+        }
         this.latencyStartedAt = performance.now();
     }
 
     /** Stop the clock at the first socket read after a timed command and
-     *  publish the reading (ms) as `network.latency`. */
+     *  publish the reading (ms) as `network.latency`. A read whose bytes were
+     *  received no later than the clock restart — the replayed backlog that
+     *  arrives just ahead of it, say — is not its reply: the next reads off the
+     *  socket are. */
     private finishLatencyMeasurement(receivedAt: number): void {
         if (this.latencyStartedAt === null) return;
+        if (receivedAt <= this.latencyStartedAt) return;
         const duration = Math.max(0, receivedAt - this.latencyStartedAt);
         this.latencyStartedAt = null;
         this.eventBus.emit('network.latency', duration);
@@ -1668,7 +1740,9 @@ export class MudClient {
     /** Run a slice of the queued socket reads, and book the next if any are
      *  left. */
     private pumpInbound(): void {
-        if (this.inboundRunning) return;
+        // No new slice while the transport is away or catching up; the queue
+        // keeps what was already received, and onresume picks it back up.
+        if (this.inboundRunning || this.socket?.away) return;
         this.inboundRunning = true;
         let done = true;
         try {
