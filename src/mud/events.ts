@@ -254,6 +254,19 @@ export type MudClientEvents = {
      *  redials. Fires at most once per connection, and never once the profile's
      *  `promptForVersionInTTYPE` latch is set. */
     'kavir.detected': void;
+    /** The transport to a proxy that offers session resumption was lost while
+     *  the proxy kept the game session. Not a disconnect — no
+     *  `client.disconnect`, so nothing that logs in or reconnects runs — and the
+     *  parser, negotiation and Lua state all stay. */
+    'client.detached': void;
+    /** A lost transport is back on the same game session, caught up: no
+     *  `client.connect` follows, since the link to the game was never lost. */
+    'client.resumed': void;
+    /** A game session the proxy was holding failed for good — a resume it
+     *  refused, or a stream the client cannot continue safely. Raised just before
+     *  the `client.disconnect` that ends it, so that disconnect can be told apart
+     *  from a drop to recover from by dialling a new game (a new login). */
+    'client.sessionFailed': void;
     /** An IAC GA/EOR arrived. The next line flushed is the one it ended — an
      *  empty one for a bare marker, as in Mudlet. */
     'prompt': void;

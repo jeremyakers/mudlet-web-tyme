@@ -77,7 +77,7 @@ interface Props {
 }
 
 export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onToggleSettings, onCloseProfile }: Props) {
-    const { session, status, ping, passwordMode, connect, disconnect, send } = useMudSession();
+    const { session, status, ping, passwordMode, transportDetached, connect, disconnect, send } = useMudSession();
 
     const [command, setCommand] = useState('');
     const [scriptsOpen, setScriptsOpen] = useState(false);
@@ -867,7 +867,8 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
         // dial rather than on `client.connect`, which an attempt that never
         // reaches the game — a rejected certificate, say — never raises.
         const t5 = session.events.on('status', (status) => {
-            if (status !== 'connecting') return;
+            // (Not a lost transport reattaching to the same, still-secure link.)
+            if (status !== 'connecting' || session.transportDetached()) return;
             msspTlsFacts.current = emptyMsspTlsFacts();
             setTlsStatus(null);
         });
@@ -1234,6 +1235,9 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
         setFilesOpen({ initialPath, ...(initialLine !== undefined ? { initialLine } : {}), pickedAt: Date.now() });
 
     const handleSend = () => {
+        // While the transport is away but the proxy still holds the game
+        // session, a typed line stays a draft until Connect resumes it.
+        if (session.transportDetached()) return;
         // The command box is multi-line (Ctrl/Shift+Enter stages newlines), so a
         // single Enter can carry several lines — each line is its own command,
         // exactly as Mudlet's TCommandLine splits before calling Host::send once
@@ -1321,6 +1325,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
             <Toolbar
                 connectionName={connection.name}
                 status={status}
+                transportDetached={transportDetached}
                 ping={ping}
                 brandContext={brandToolbarContext}
                 addonCommands={addonCommands}
