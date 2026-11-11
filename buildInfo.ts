@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -25,6 +25,8 @@ function packageVersion(): string {
 /** Short HEAD hash, or '' when git can't answer — an npm tarball install, a
  *  shallow CI image, or a source zip has no repo. Callers must tolerate ''. */
 function gitCommit(): string {
+    if (process.env.SOURCE_COMMIT) return process.env.SOURCE_COMMIT.slice(0, 7);
+    if (!existsSync(new URL('.git', repoRoot))) return '';
     try {
         return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
             cwd: fileURLToPath(repoRoot),

@@ -42,7 +42,12 @@ export function AboutModal({ onClose }: Props) {
                     {brand.repoUrl && (
                         <a className="about-gh" href={brand.repoUrl} target="_blank" rel="noreferrer">
                             <GithubMark />
-                            <span>View source on GitHub</span>
+                            <span>Mudlet Web source at pinned commit</span>
+                        </a>
+                    )}
+                    {brand.buildSourceUrl && (
+                        <a className="about-gh tyme-build-source" href={brand.buildSourceUrl} target="_blank" rel="noreferrer">
+                            <span>Source and licenses</span>
                         </a>
                     )}
                     <div className="about-version">

@@ -391,11 +391,11 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
     // instead of overwriting it.
     useEffect(() => {
         const dot = status === 'connected' ? '🟢' : status === 'connecting' ? '🟡' : '🔴';
-        setBaseTitle(`${connection.name} — ${getBrand().appName}`, showConnectionIndicator ? dot : '');
+        setBaseTitle(getBrand().documentTitle ?? `${connection.name} — ${getBrand().appName}`, showConnectionIndicator ? dot : '');
     }, [connection.name, status, showConnectionIndicator]);
 
     // Restore the bare app title (and stop any flash) when the profile closes.
-    useEffect(() => () => { clearTitleFlash(); setBaseTitle(getBrand().appName); }, []);
+    useEffect(() => () => { clearTitleFlash(); setBaseTitle(getBrand().documentTitle ?? getBrand().appName); }, []);
 
     // "Notify on new data": flash the title whenever the server flushes lines
     // while the tab is unfocused. flushLines is the server-only data path

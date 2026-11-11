@@ -37,7 +37,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/prepare-tyme.mjs && tsc && vite build",
     "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && tsc -p tsconfig.vite-plugin.json && node scripts/copy-lib-assets.mjs",
     "prepublishOnly": "yarn build:lib",
     "preview": "vite preview",

@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
-import type { ConnectionMode, MudConnection, ProfileSettings } from './storage/schema';
+import { connectionUrl, type ConnectionMode, type MudConnection, type ProfileSettings } from './storage/schema';
 import type { TopMenu } from './ui/menu/menuModel';
 import type { ToolbarItem } from './ui/menu/toolbarModel';
 import mudletLogoUrl from './assets/mudlet-logo.svg?url';
@@ -219,6 +219,10 @@ export interface BrandConfig {
     aboutText?: string;
     /** "View source" link in the About dialog. `undefined` hides the link. */
     repoUrl?: string;
+    /** Short browser-tab title; defaults to the profile name and app name. */
+    documentTitle?: string;
+    /** Link to the brand's own patches, build inputs and license notices. */
+    buildSourceUrl?: string;
     /** Brand-hardcoded telnet proxy. Sits below explicit user overrides in the
      *  precedence chain (connection > user settings > brand > built-in), but
      *  branded builds never expose the per-connection proxy field, so this
@@ -371,6 +375,9 @@ export function brandConnectionData(brand: BrandConfig, account?: string): Omit<
     if (!mud) return null;
     const common = {
         name: account?.trim() || mud.name || brand.appName,
+        // Keep a managed profile on the current brand endpoint even when it was
+        // first saved for another port or an earlier branded build.
+        proxyUrl: brand.proxyUrl,
         // `autoReconnect` on the connection record is the dial-on-open flag
         // (Mudlet's autologin); `reconnectOnDrop` is the redial-on-drop one.
         autoReconnect: mud.autoConnect || undefined,
@@ -410,6 +417,21 @@ export function matchBrandProfile(
     const acct = account?.trim().toLowerCase();
     if (brand.profileMode === 'perLogin' && acct) {
         return connections.find(c => c.name.trim().toLowerCase() === acct);
+    }
+    // A branded single-game target owns one stable profile per host+port (or
+    // websocket URL) — the game identity — not per mutable display text. The
+    // label in `brand.mud.name` can change between builds (e.g. a renamed port
+    // picker), and matching on the name then orphans the saved profile with
+    // its settings and history; matching on the target keeps exactly one
+    // profile per game. `ensureBrandProfile` still re-stamps display-only
+    // fields (including the current label) on every login.
+    if (brand.profileMode !== 'perLogin' && brand.mud) {
+        if (brand.mud.mode === 'mud') {
+            const { host, port } = brand.mud;
+            return connections.find(c => c.mode === 'mud' && c.host === host && c.port === port);
+        }
+        const url = brand.mud.url;
+        return connections.find(c => c.mode !== 'mud' && connectionUrl(c) === url);
     }
     return connections[0];
 }

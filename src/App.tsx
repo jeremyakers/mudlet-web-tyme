@@ -109,7 +109,7 @@ export default function App() {
     useEffect(() => {
         if (brand.profileMode === 'perLogin') return;
         const seed = brandConnectionData(brand);
-        if (!seed || useAppStore.getState().connections.length > 0) return;
+        if (!seed || matchBrandProfile(useAppStore.getState().connections, brand)) return;
         setupIreDriverBugfix(addBrandProfile(brand, seed, useAppStore.getState()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -117,8 +117,8 @@ export default function App() {
     const setProfileQuery = (id: string | null) => {
         // Branded builds keep the URL clean — no ?profile= is written (a
         // reload lands on the login form anyway, since credentials are never
-        // persisted). Deep links are still honored when present, and closing
-        // a profile still cleans one up.
+        // persisted). Generic profile deep links are ignored on startup;
+        // closing a profile still cleans up any stale parameter.
         if (id && isBrandedMode()) return;
         const url = new URL(window.location.href);
         if (id) url.searchParams.set('profile', id);
@@ -163,7 +163,9 @@ export default function App() {
     // User can hit Connect from the toolbar to actually dial.
     useEffect(() => {
         const id = deepLinkProfileId.current;
-        if (!id || activeConnection) return;
+        // A branded fixed target must reach its ensure/re-stamp login path
+        // before any profile opens; generic deep links cannot select a target.
+        if (!id || activeConnection || isBrandedMode()) return;
         const conn = connections.find(c => c.id === id);
         if (!conn) return;
         deepLinkProfileId.current = null;

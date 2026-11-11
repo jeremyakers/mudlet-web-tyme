@@ -204,11 +204,16 @@ describe('matchBrandProfile', () => {
         expect(matchBrandProfile(profiles, getBrand(), 'Bilbo')).toBeUndefined();
     });
 
-    it('falls back to the shared profile without an account or in single mode', () => {
+    it('falls back to the shared profile without an account in per-login mode', () => {
         setBrand({ mud, profileMode: 'perLogin' });
         expect(matchBrandProfile(profiles, getBrand(), '')?.id).toBe('a');
+    });
+
+    it('matches only the pinned target in single mode', () => {
         setBrand({ mud });
-        expect(matchBrandProfile(profiles, getBrand(), 'Frodo')?.id).toBe('a');
+        expect(matchBrandProfile(profiles, getBrand(), 'Frodo')).toBeUndefined();
+        const target = conn({ id: 'target', mode: 'mud', host: mud.host, port: mud.port });
+        expect(matchBrandProfile([...profiles, target], getBrand(), 'Frodo')?.id).toBe('target');
     });
 });
 

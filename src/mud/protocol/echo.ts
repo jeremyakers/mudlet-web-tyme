@@ -7,20 +7,24 @@ const ECHO_OPT = 0x01;
 
 /** Mudlet-parity anomaly detection (cTelnet::checkEchoAnomalyPattern):
  *  if the raw ECHO state toggles ≥ ANOMALY_THRESHOLD times within
- *  ANOMALY_WINDOW_MS we conclude the server is misusing ECHO for
- *  per-line edit signalling and definitively refuse the option for the rest
- *  of the session by sending `IAC DONT ECHO` and ignoring further flips. */
+ *  ANOMALY_WINDOW_MS we note that the server is likely misusing ECHO for
+ *  per-line edit signalling and report the pattern — and nothing else. Tyme
+ *  keeps the report diagnostic: the refusal Mudlet arms here also unmasked
+ *  passwords when a login's wrong-password retry loop (WONT/WILL per attempt)
+ *  crossed the same window, so the third attempt typed in plain sight. The
+ *  event lets a script react; masking itself keeps following the ECHO
+ *  negotiation. */
 const ANOMALY_THRESHOLD = 5;
 const ANOMALY_WINDOW_MS = 5000;
 
-/** Mudlet-parity safety net for servers that send `IAC WILL ECHO` for the
- *  password prompt but never follow up with `IAC WONT ECHO` after the user
- *  authenticates (network drop / server bug). We arm a one-shot timeout
- *  when password mode commits, but only during the first LOGIN_PHASE_MS of
- *  the connection so legitimate later password prompts (e.g. an admin
- *  command) aren't disturbed. The timer is cancelled when WONT arrives. */
-const LOGIN_PHASE_MS = 5 * 60 * 1000;
-const PASSWORD_TIMEOUT_MS = 60 * 1000;
+/** Tyme contract, replacing Mudlet's login-phase safety timeout: once the
+ *  server takes ECHO for a password prompt, masking — and the command
+ *  history/display suppression that rides on it — stays active until the
+ *  server itself ends the prompt with `IAC WONT ECHO` or the connection is
+ *  reset. A real delayed login can outrun any fixed timeout, and a timed
+ *  reset unmasked input exactly while the game was still awaiting the
+ *  password; ordinary commands echo normally again the moment WONT ECHO
+ *  commits (see tests/echo-password-persistence.test.ts). */
 
 export class EchoHandler {
     /** State exposed to UI / send-echo logic, committed on the negotiation
@@ -29,8 +33,6 @@ export class EchoHandler {
      *  line twice — and, since a server that echoes for us is a server we must
      *  not echo a password for, it is also when the input is masked. */
     private _serverEchoing = false;
-    private passwordSafetyTimer: ReturnType<typeof setTimeout> | null = null;
-    private connectionStartAt = 0;
     private toggleCount = 0;
     private lastToggleAt = 0;
     private _anomalyDetected = false;
@@ -108,19 +110,13 @@ export class EchoHandler {
     }
 
     private setEchoing(on: boolean): void {
-        // Anomaly is sticky for the session — once we've refused ECHO we don't
-        // re-engage no matter what the server sends. A WILL ECHO is still
-        // answered, though, with the refusal: cTelnet's WILL branch asks
-        // checkEchoAnomalyPattern(), which stays true, and sends DONT ECHO.
-        if (this._anomalyDetected) {
-            if (on) this.sendRaw(ECHO_DONT);
-            return;
-        }
         if (on === this._serverEchoing) return;
-        // The toggle counter is what stands between us and a server that misuses
-        // ECHO for line editing — see trackToggleAndDetectAnomaly, which is
-        // cTelnet::checkEchoAnomalyPattern down to the 5-in-5000ms constants.
-        if (this.trackToggleAndDetectAnomaly()) return;
+        // The toggle counter only reports a server that misuses ECHO for line
+        // editing — see trackToggleAndDetectAnomaly, which is cTelnet's
+        // checkEchoAnomalyPattern down to the 5-in-5000ms constants. Mudlet's
+        // sticky refusal lived here and would have left every later password
+        // prompt unmasked; Tyme's report touches nothing else.
+        this.trackToggleAndDetectAnomaly();
         // Committed on the negotiation itself, exactly where cTelnet calls
         // setRemoteEchoingActive(). There used to be half a second of debounce
         // in front of this, to keep a bouncing server from being acked on every
@@ -132,7 +128,6 @@ export class EchoHandler {
         this._serverEchoing = on;
         this.sendRaw(on ? ECHO_DO : ECHO_DONT);
         this.onEchoChange(this.passwordMode);
-        this.updatePasswordSafetyTimer();
         if (debugEchoEnabled()) {
             const mode = !this._serverEchoing ? 'OFF (normal)'
                 : this.passwordMode ? 'ON (password mode)'
@@ -141,37 +136,13 @@ export class EchoHandler {
         }
     }
 
-    /** Arm / disarm the Mudlet-style "password mode never ended" safety
-     *  timeout. Called right after a committed state change. */
-    private updatePasswordSafetyTimer(): void {
-        if (this.passwordSafetyTimer) {
-            clearTimeout(this.passwordSafetyTimer);
-            this.passwordSafetyTimer = null;
-        }
-        // Only password masking needs the "server never sent WONT" safety net.
-        // Session-wide echo legitimately stays on for the whole connection, so
-        // forcing it off after a timeout would re-enable local echo and double
-        // every line.
-        if (!this.passwordMode) return;
-        if (this.connectionStartAt === 0) return;
-        if (Date.now() - this.connectionStartAt >= LOGIN_PHASE_MS) return;
-        this.passwordSafetyTimer = setTimeout(() => {
-            this.passwordSafetyTimer = null;
-            if (!this._serverEchoing) return;
-            this._serverEchoing = false;
-            this.sendRaw(ECHO_DONT);
-            this.onEchoChange(false);
-            if (debugEchoEnabled()) {
-                console.warn(`[mudlet.echo] password-mode safety timeout (${PASSWORD_TIMEOUT_MS}ms) — server never sent WONT ECHO, forcing OFF`);
-            }
-        }, PASSWORD_TIMEOUT_MS);
-    }
-
-    /** Mirror cTelnet::checkEchoAnomalyPattern. Increments a sliding-window
-     *  toggle counter on every raw flip and, when the threshold is crossed,
-     *  trips sticky anomaly state. Returns true when anomaly was tripped on
-     *  this call (the caller should bail out). */
-    private trackToggleAndDetectAnomaly(): boolean {
+    /** Mirror cTelnet::checkEchoAnomalyPattern as a diagnostic. Increments a
+     *  sliding-window toggle counter on every raw flip and, when the threshold
+     *  is crossed, raises the engine event so a `sysEchoAnomalyDetected` Lua
+     *  event can fire. Unlike desktop's checkEchoAnomalyPattern it refuses
+     *  nothing: the sticky refusal unmasked passwords on a retry loop and
+     *  doubled lines are a display complaint, not a privacy one. */
+    private trackToggleAndDetectAnomaly(): void {
         const now = Date.now();
         if (this.lastToggleAt > 0 && now - this.lastToggleAt < ANOMALY_WINDOW_MS) {
             this.toggleCount++;
@@ -179,40 +150,21 @@ export class EchoHandler {
             this.toggleCount = 1;
         }
         this.lastToggleAt = now;
-        if (this.toggleCount < ANOMALY_THRESHOLD) return false;
-        this.tripAnomaly();
-        return true;
-    }
-
-    /** Refuse ECHO for the rest of the session: send `IAC DONT ECHO`, drop any
-     *  the safety timer, force the UI back to normal, and notify
-     *  the engine so a `sysEchoAnomalyDetected` Lua event can fire. */
-    private tripAnomaly(): void {
-        this._anomalyDetected = true;
-        if (this.passwordSafetyTimer) {
-            clearTimeout(this.passwordSafetyTimer);
-            this.passwordSafetyTimer = null;
-        }
-        this.sendRaw(ECHO_DONT);
-        if (this._serverEchoing) {
-            this._serverEchoing = false;
-            this.onEchoChange(false);
-        }
-        this.onAnomalyDetected?.();
-        if (debugEchoEnabled()) {
-            console.warn(`[mudlet.echo] anomaly detected — refusing ECHO for the session`);
+        // One report per session keeps the console quiet on a churny server;
+        // the flag stays diagnostic and never gates the negotiation.
+        if (this.toggleCount >= ANOMALY_THRESHOLD && !this._anomalyDetected) {
+            this._anomalyDetected = true;
+            this.onAnomalyDetected?.();
+            if (debugEchoEnabled()) {
+                console.warn(`[mudlet.echo] anomaly detected — ECHO is toggling ≥ ${ANOMALY_THRESHOLD}×/${ANOMALY_WINDOW_MS}ms; reported, masking still follows the negotiation`);
+            }
         }
     }
 
     reset(): void {
-        if (this.passwordSafetyTimer) {
-            clearTimeout(this.passwordSafetyTimer);
-            this.passwordSafetyTimer = null;
-        }
         this.toggleCount = 0;
         this.lastToggleAt = 0;
         this._anomalyDetected = false;
-        this.connectionStartAt = Date.now();
         if (this._serverEchoing) {
             this._serverEchoing = false;
             this.onEchoChange(false);
