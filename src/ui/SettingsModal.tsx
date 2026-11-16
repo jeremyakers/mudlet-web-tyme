@@ -36,6 +36,7 @@ import { TlsCertificateBox } from './TlsCertificateBox';
 import { HelpModal } from './HelpModal';
 import type { TlsStatus } from '../mud/events';
 import { effectiveProxyUrl, proxyCanInspectCertificates } from '../storage';
+import { writeTymeSiteTheme } from '../tyme-brand';
 
 // Cased as Mudlet's own colour labels are (label_black, label_lBlack, …), so a
 // player looking for the one they know finds the same words here.
@@ -955,7 +956,10 @@ export function SettingsModal({ onClose, connectionId, vfs = null, tlsStatus = n
                             // Inside a profile, set its override; on the
                             // connection screen, set the launcher theme.
                             if (connectionId) patchProfile({ theme: next });
-                            else patchClient({ theme: next });
+                            else {
+                                patchClient({ theme: next });
+                                writeTymeSiteTheme(next);
+                            }
                         }}
                     >
                         {getThemeChoices().map(opt => (

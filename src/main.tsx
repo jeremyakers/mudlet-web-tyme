@@ -7,19 +7,12 @@ import { credentialVault } from './vault/CredentialVault';
 import { VaultModal } from './ui/VaultModal';
 import { installVault } from './vault/vaultAccess';
 import { installVaultHelpTopic } from './vault/vaultHelpTopic';
-import { tymeBrandFromSearch, TymePortError } from './tyme-brand';
+import { applyTymeSiteTheme, tymeBrandForPage, TymeAccountError, TymePortError } from './tyme-brand';
 import './tyme-brand.css';
 
-const tymeBrand = tymeBrandFromSearch(window.location.search);
-if (tymeBrand?.mud?.mode === 'mud') {
-    // Only a validated, configured brand creates a manifest link. The static
-    // standalone document advertises no invalid portless launch, while the
-    // stock library/default manifest file remains untouched for other users.
-    const manifest = document.createElement('link');
-    manifest.rel = 'manifest';
-    manifest.href = `./manifest-${tymeBrand.mud.port}.webmanifest`;
-    document.head.append(manifest);
-}
+// A `character` selector is confirmed by the website before anything opens;
+// the guest `?port=` path resolves immediately. See tyme-account.ts.
+const tymePage = tymeBrandForPage(window.location.search);
 
 // The stock app is just MudletWebApp with no brand — branded builds import
 // MudletWebApp from the library entry and pass their own BrandConfig. Page
@@ -40,10 +33,24 @@ const REMEMBERED_UNLOCK_WAIT_MS = 1500;
 void Promise.race([
     credentialVault.restoreOnThisDevice(),
     new Promise(resolve => setTimeout(resolve, REMEMBERED_UNLOCK_WAIT_MS)),
-]).finally(() => {
+]).finally(async () => {
+    const page = await tymePage;
+    const tymeBrand = page && 'brand' in page ? page.brand : null;
+    if (tymeBrand) applyTymeSiteTheme();
+    if (tymeBrand?.mud?.mode === 'mud') {
+        // Only a validated, configured brand creates a manifest link. The static
+        // standalone document advertises no invalid portless launch, while the
+        // stock library/default manifest file remains untouched for other users.
+        const manifest = document.createElement('link');
+        manifest.rel = 'manifest';
+        manifest.href = `./manifest-${tymeBrand.mud.port}.webmanifest`;
+        document.head.append(manifest);
+    }
     createRoot(document.getElementById('root')!).render(
         <StrictMode>
-            {tymeBrand ? <MudletWebApp brand={tymeBrand} /> : <TymePortError />}
+            {tymeBrand ? <MudletWebApp brand={tymeBrand} />
+                : page && 'accountFailure' in page ? <TymeAccountError kind={page.accountFailure} creationName={page.creationName} />
+                : <TymePortError />}
         </StrictMode>,
     );
 });

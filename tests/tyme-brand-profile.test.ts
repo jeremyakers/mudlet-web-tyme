@@ -84,3 +84,39 @@ describe('Tyme branded profiles', () => {
         expect(match?.id).toBe('stable-8000-id');
     });
 });
+
+describe('Tyme per-account managed profiles', () => {
+    const mud: NonNullable<BrandConfig['mud']> = { mode: 'mud', name: 'Duke — Testport', host: 'tymemud.com', port: 8000 };
+    const account: BrandConfig = { ...brand, profileKey: 'acct:42:8000:123', mud };
+    const guestProfile: MudConnection = {
+        id: 'guest-8000', name: 'A Moment in Tyme — Testport', mode: 'mud', host: 'tymemud.com', port: 8000,
+        proxyUrl: 'wss://tymemud.com/play/ws/8000',
+    };
+    const dukeProfile: MudConnection = {
+        ...guestProfile, id: 'duke', name: 'Duke — Testport', brandProfileKey: 'acct:42:8000:123',
+    };
+
+    it('stamps the stable key on the managed profile seed', () => {
+        expect(brandConnectionData(account)).toMatchObject({ brandProfileKey: 'acct:42:8000:123' });
+        expect(brandConnectionData(brand)).not.toHaveProperty('brandProfileKey');
+    });
+
+    it('never lets an account launch adopt the guest profile by host and port', () => {
+        expect(matchBrandProfile([guestProfile], account)).toBeUndefined();
+    });
+
+    it('never lets a guest launch re-stamp an account profile', () => {
+        expect(matchBrandProfile([dukeProfile], brand)).toBeUndefined();
+        expect(matchBrandProfile([dukeProfile, guestProfile], brand)?.id).toBe('guest-8000');
+    });
+
+    it('finds the same profile after a rename because the key, not the label, is the identity', () => {
+        const renamed = { ...account, mud: { ...mud, name: 'Duchess — Testport' } };
+        expect(matchBrandProfile([guestProfile, dukeProfile], renamed)?.id).toBe('duke');
+    });
+
+    it('keeps two characters of one game in separate profiles', () => {
+        const elayne: BrandConfig = { ...account, profileKey: 'acct:42:8000:124' };
+        expect(matchBrandProfile([dukeProfile], elayne)).toBeUndefined();
+    });
+});
