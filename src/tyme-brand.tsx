@@ -1,12 +1,31 @@
 import { useEffect, useState } from 'react';
 import { Info } from 'lucide-react';
-import { getBrand, type BrandConfig, type LandingProps } from './branding';
+import { getBrand, isLightTheme, type BrandConfig, type LandingProps } from './branding';
 import { AboutModal } from './ui/AboutModal';
 import { Button } from './ui/components';
+import { useAppStore } from './storage/appStore';
+import type { Theme } from './storage/schema';
+import { resolveTheme } from './utils/systemTheme';
 import enabledPorts from './tyme-enabled-ports.json';
+import {
+    AccountError, createCodeSource, createGrantSource, fetchCreationTarget, fetchOwnedCharacter,
+    type AccountFailure, type CreationTarget, type Fetch, type OwnedCharacter,
+} from './tyme-account';
 import logoUrl from './tyme-banner.png?url';
 
 let initialConnectAttempted = false;
+
+/** The website owns the launcher default; a profile's own theme still wins in App. */
+export function applyTymeSiteTheme(cookie = document.cookie): void {
+    const selected = /(?:^|;)\s*olc_theme=([^;]*)/.exec(cookie)?.[1];
+    useAppStore.getState().patchClient({ theme: selected === 'light' ? 'light' : 'dark' });
+}
+
+/** Mirror only launcher changes back to the website's light/dark cookie. */
+export function writeTymeSiteTheme(theme: Theme, target: Document = document): void {
+    const selected = isLightTheme(resolveTheme(theme)) ? 'light' : 'dark';
+    target.cookie = `olc_theme=${selected};path=/;max-age=31536000;samesite=lax`;
+}
 
 export function TymeLanding({ openProfile, ensureBrandProfile, openSettings }: LandingProps) {
     const brand = getBrand();
@@ -60,11 +79,59 @@ export function TymeLanding({ openProfile, ensureBrandProfile, openSettings }: L
     );
 }
 
-export function tymeBrandFromSearch(search: string): BrandConfig | null {
+/** The enabled game a page URL selects, or null for none or an ambiguous choice. */
+function selectedPort(search: string) {
     const selections = new URLSearchParams(search).getAll('port');
     if (selections.length !== 1) return null;
-    const selected = enabledPorts.find(candidate => String(candidate.port) === selections[0]);
+    return enabledPorts.find(candidate => String(candidate.port) === selections[0]) ?? null;
+}
+
+/** `?character=<idnum>`: null when absent, `invalid` unless exactly one plain
+ *  decimal id. The id is a non-secret selector; the website decides ownership. */
+export function tymeCharacterFromSearch(search: string): number | null | 'invalid' {
+    const values = new URLSearchParams(search).getAll('character');
+    if (values.length === 0) return null;
+    if (values.length > 1 || !/^\d{1,10}$/.test(values[0])) return 'invalid';
+    const idnum = Number(values[0]);
+    return idnum <= 2147483647 ? idnum : 'invalid';
+}
+
+/** `?create=<name>`: null when absent, `invalid` unless exactly one plausible
+ *  new-character name. The website repeats validation and normalizes it. */
+export function tymeCreationFromSearch(search: string): string | null | 'invalid' {
+    const values = new URLSearchParams(search).getAll('create');
+    if (values.length === 0) return null;
+    return values.length === 1 && /^[A-Za-z']{2,20}$/.test(values[0]) ? values[0] : 'invalid';
+}
+
+export function tymeBrandFromSearch(
+    search: string,
+    owned?: OwnedCharacter,
+    fetchCode?: () => Promise<string>,
+    creation?: CreationTarget,
+    fetchGrant?: () => Promise<string>,
+): BrandConfig | null {
+    const selected = selectedPort(search);
     if (!selected) return null;
+    const idnum = tymeCharacterFromSearch(search);
+    const create = tymeCreationFromSearch(search);
+    if ((idnum !== null && create !== null) || create === 'invalid') return null;
+    if (owned && (owned.port !== selected.port || owned.idnum !== idnum)) return null;
+    if (creation && (creation.port !== selected.port || typeof create !== 'string'
+        || creation.name !== create[0].toUpperCase() + create.slice(1).toLowerCase())) return null;
+    const accountBrand: Partial<BrandConfig> = owned && fetchCode ? {
+        // One profile per account, game and character id: stable across renames
+        // (the name is only a label) and never shared with the guest profile.
+        profileKey: `acct:${owned.accountId}:${selected.port}:${owned.idnum}`,
+        documentTitle: `MiT: ${selected.label} - ${owned.name}`,
+        tagline: `Wheel of Time — ${selected.label} · ${owned.name}`,
+        oneTimeLogin: { account: owned.name, fetchCode },
+    } : creation && fetchGrant ? {
+        profileKey: `acct:${creation.accountId}:${selected.port}:new:${creation.name}`,
+        documentTitle: `MiT: ${selected.label} - Create ${creation.name}`,
+        tagline: `Wheel of Time — ${selected.label} · Create ${creation.name}`,
+        oneTimeCreation: { account: creation.name, fetchGrant },
+    } : {};
 
     return {
         appName: 'A Moment in Tyme',
@@ -77,14 +144,80 @@ export function tymeBrandFromSearch(search: string): BrandConfig | null {
         proxyUrl: `wss://tymemud.com/play/ws/${selected.port}`,
         mud: {
             mode: 'mud',
-            name: `A Moment in Tyme — ${selected.label}`,
+            name: owned ? `${owned.name} — ${selected.label}`
+                : creation ? `Create ${creation.name} — ${selected.label}` : `A Moment in Tyme — ${selected.label}`,
             host: 'tymemud.com',
             port: selected.port,
         },
         profileMode: 'single',
         packages: [],
         Landing: TymeLanding,
+        ...accountBrand,
     };
+}
+
+export type TymePage =
+    | { brand: BrandConfig }
+    | { accountFailure: AccountFailure; creationName?: string }
+    | null;
+
+/** Resolve the page URL to a brand before anything renders. A `character`
+ *  selector must be confirmed by the website first: on any failure the page
+ *  explains the failure and opens no profile and no connection. */
+export async function tymeBrandForPage(search: string, fetchImpl: Fetch = fetch): Promise<TymePage> {
+    const selected = selectedPort(search);
+    if (!selected) return null;
+    const idnum = tymeCharacterFromSearch(search);
+    const create = tymeCreationFromSearch(search);
+    if (idnum === 'invalid' || create === 'invalid' || (idnum !== null && create !== null)) {
+        return { accountFailure: 'invalid' };
+    }
+    if (idnum === null && create === null) {
+        const brand = tymeBrandFromSearch(search);
+        return brand ? { brand } : null;
+    }
+    try {
+        if (create !== null) {
+            const creation = await fetchCreationTarget(selected.port, create, fetchImpl);
+            const brand = tymeBrandFromSearch(search, undefined, undefined, creation, createGrantSource(creation, fetchImpl));
+            return brand ? { brand } : { accountFailure: 'login' };
+        }
+        if (idnum === null) return { accountFailure: 'invalid' };
+        const owned = await fetchOwnedCharacter(selected.port, idnum, fetchImpl);
+        const brand = tymeBrandFromSearch(search, owned, createCodeSource(owned, fetchImpl));
+        return brand ? { brand } : { accountFailure: 'login' };
+    } catch (error) {
+        const kind = error instanceof AccountError ? error.kind : 'unavailable';
+        return {
+            accountFailure: kind,
+            ...(kind === 'name_taken' && typeof create === 'string' ? {
+                creationName: create[0].toUpperCase() + create.slice(1).toLowerCase(),
+            } : {}),
+        };
+    }
+}
+
+export function TymeAccountError({ kind, creationName }: { kind: AccountFailure; creationName?: string }) {
+    const copy = {
+        login: ['Sign in to play this character', 'This character is not available to your signed-in account. Sign in, then choose it from the Play page.'],
+        name_taken: ['That name is taken', `${creationName ?? 'That name'} is already a character in that game. Choose another name on your account page.`],
+        unavailable: ['Could not check your account', 'The account service could not be reached. Nothing was connected.'],
+        invalid: ['This character link is not valid', 'Choose a character from the Play page.'],
+    }[kind];
+    return (
+        <div className="connection-screen tyme-port-error">
+            <div className="connection-panel">
+                <div className="connection-brand">A Moment in Tyme</div>
+                <h1>{copy[0]}</h1>
+                <p>{copy[1]}</p>
+                {kind === 'login' && <p><a href="/login.php">Sign in</a></p>}
+                {kind === 'name_taken' && <p><a href="/profile.php">Back to your account</a></p>}
+                {kind === 'unavailable' && <p><Button type="button" variant="primary" onClick={() => window.location.reload()}>Retry</Button></p>}
+                <p><a href="/play/">Play page</a></p>
+                <p><a href="./source.html">Source and licenses</a></p>
+            </div>
+        </div>
+    );
 }
 
 export function TymePortError() {

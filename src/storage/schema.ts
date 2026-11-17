@@ -16,6 +16,10 @@ export interface MudConnection {
     host?: string;
     port?: number;
     proxyUrl?: string;      // overrides DEFAULT_PROXY_URL when set
+    /** Brand-managed profile identity (e.g. one profile per account/character).
+     *  Opaque and stable where `name` is only a label; a brand that sets none
+     *  matches only profiles that carry none. Not a secret. */
+    brandProfileKey?: string;
     /** When true, opening this profile (via the "Open" button or a `?profile=`
      *  deep link) immediately dials the connection instead of opening offline.
      *  `undefined`/`false` = open offline (default); the "Connect" button always

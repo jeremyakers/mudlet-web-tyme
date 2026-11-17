@@ -219,6 +219,17 @@ export interface BrandConfig {
     aboutText?: string;
     /** "View source" link in the About dialog. `undefined` hides the link. */
     repoUrl?: string;
+    /** Opaque stable identity of this brand's managed profile. When set, the
+     *  profile is matched and stamped by this key alone; when unset, only
+     *  profiles without a key are matched (by host+port). */
+    profileKey?: string;
+    /** Ephemeral one-use login for the managed profile. The character name is
+     *  sent at the login prompt, and `fetchCode()` is called after it for a code
+     *  typed at the game's next secret prompt. Never persisted. */
+    oneTimeLogin?: { account: string; fetchCode: () => Promise<string> };
+    /** Ephemeral new-character handoff: the name is followed by one confirmation
+     *  and a grant fetched at the game's email prompt. Never persisted. */
+    oneTimeCreation?: { account: string; fetchGrant: () => Promise<string> };
     /** Short browser-tab title; defaults to the profile name and app name. */
     documentTitle?: string;
     /** Link to the brand's own patches, build inputs and license notices. */
@@ -378,6 +389,7 @@ export function brandConnectionData(brand: BrandConfig, account?: string): Omit<
         // Keep a managed profile on the current brand endpoint even when it was
         // first saved for another port or an earlier branded build.
         proxyUrl: brand.proxyUrl,
+        ...(brand.profileKey ? { brandProfileKey: brand.profileKey } : {}),
         // `autoReconnect` on the connection record is the dial-on-open flag
         // (Mudlet's autologin); `reconnectOnDrop` is the redial-on-drop one.
         autoReconnect: mud.autoConnect || undefined,
@@ -426,6 +438,10 @@ export function matchBrandProfile(
     // profile per game. `ensureBrandProfile` still re-stamps display-only
     // fields (including the current label) on every login.
     if (brand.profileMode !== 'perLogin' && brand.mud) {
+        // A keyed brand owns exactly its keyed profile; an unkeyed (guest) brand
+        // owns only unkeyed ones, so it can never re-stamp an account profile.
+        if (brand.profileKey) return connections.find(c => c.brandProfileKey === brand.profileKey);
+        connections = connections.filter(c => !c.brandProfileKey);
         if (brand.mud.mode === 'mud') {
             const { host, port } = brand.mud;
             return connections.find(c => c.mode === 'mud' && c.host === host && c.port === port);

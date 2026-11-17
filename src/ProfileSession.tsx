@@ -62,6 +62,7 @@ import { replayFileName } from './mud/replay/replayFormat';
 import { listenForKeybindings } from './mud/keybindings/keyEventTarget';
 import { FilePickerModal } from './ui/FilePickerModal';
 import { TextAutoLogin } from './mud/autoLogin';
+import { AccountNameHandoff, OneTimeCodeLogin, OneTimeCreation } from './tyme-account';
 import type { ProfileVFS } from './scripting/vfs/ProfileVFS';
 
 interface Props {
@@ -134,6 +135,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
     // created by the auto-login effect below; cancelled when GMCP Char.Login
     // takes the login over.
     const textAutoLogin = useRef<TextAutoLogin | null>(null);
+    const accountNameHandoff = useRef<AccountNameHandoff | null>(null);
     // GMCP Char.Login, versions 1 and 2 — everything from the per-connection
     // "already tried / declined / unanswered" guards to reconnect tokens and
     // the browser sign-in lives in the controller (mud/CharLoginController);
@@ -1026,13 +1028,55 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
     // mud/autoLogin.ts). Cancelled on disconnect, or when GMCP Char.Login
     // takes over (see charLogin.request).
     useEffect(() => {
+        // A brand-supplied one-use login (a signed-in website account) replaces
+        // stored credentials for this connection: the name goes out as usual, and
+        // the code is fetched only after it and typed only at the game's next
+        // secret prompt. Nothing here reaches storage, the vault or history.
+        const oneTime = getBrand().oneTimeLogin;
+        const creation = getBrand().oneTimeCreation;
+        const accountLogin = oneTime ?? creation;
+        const codeLogin = oneTime ? new OneTimeCodeLogin({
+            fetchCode: oneTime.fetchCode,
+            sendSecret: (code) => session.sendSecret(code),
+            onError: (error) => postLoginMessage(
+                error.kind === 'login'
+                    ? `${error.message} Sign in again from the Play page, or type your code here.`
+                    : `${error.message} Type the code from your account page or email.`,
+            ),
+        }) : null;
+        const creationLogin = creation ? new OneTimeCreation({
+            fetchGrant: creation.fetchGrant,
+            sendConfirmation: (answer) => session.sendData(answer, false),
+            sendSecret: (grant) => session.sendSecret(grant),
+            onError: (error) => postLoginMessage(error.kind === 'name_taken'
+                ? error.message
+                : 'The creation code could not be fetched. Type the code from your account page.'),
+        }) : null;
+        const nameSent = () => { codeLogin?.nameSent(); creationLogin?.nameSent(); };
+        // The account's name goes out once: at the game's name prompt, by the
+        // fallback timer, or not at all when the player types first.
+        let handoff: AccountNameHandoff | null = null;
         const autoLogin = new TextAutoLogin({
-            readCredentials: () => readStoredLogin(connection.id),
-            sendLogin: (account) => session.sendData(account, false),
+            readCredentials: () => (accountLogin ? { account: accountLogin.account, password: '' } : readStoredLogin(connection.id)),
+            sendLogin: (account) => {
+                if (handoff && !handoff.timer()) return;
+                session.sendData(account, false);
+                nameSent();
+            },
             sendPassword: (password) => session.sendSecret(password),
         });
+        handoff = accountLogin ? new AccountNameHandoff({
+            name: accountLogin.account,
+            sendName: () => session.sendData(accountLogin.account, false),
+            nameSent,
+            cancelTimer: () => autoLogin.cancel(),
+        }) : null;
+        accountNameHandoff.current = handoff;
         textAutoLogin.current = autoLogin;
         const onConnect = () => {
+            handoff?.connected();
+            codeLogin?.connected();
+            creationLogin?.connected();
             charLoginRef.current?.connected();
             // A text-login game gives no signal we can wait behind — the name
             // prompt arrives when it arrives — so a locked vault has to be
@@ -1047,11 +1091,25 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
             autoLogin.start();
         };
         const u1 = session.events.on('client.connect', onConnect);
-        const u2 = session.events.on('client.disconnect', () => autoLogin.cancel());
+        const u2 = session.events.on('client.disconnect', () => { autoLogin.cancel(); codeLogin?.disconnected(); creationLogin?.disconnected(); });
+        const u3 = codeLogin ? session.events.on('telnet.echo', (masked: boolean) => codeLogin.maskChanged(masked)) : () => {};
+        const u4 = handoff ? session.events.on('flushLines', (groups) => {
+            for (const group of groups) {
+                if (group.type !== 'mud') continue;
+                for (const line of group.text.split('\n')) {
+                    const text = line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+                    handoff.prompt(text);
+                    creationLogin?.prompt(text);
+                }
+            }
+        }) : () => {};
         return () => {
-            u1(); u2();
+            u1(); u2(); u3(); u4();
+            codeLogin?.disconnected();
+            creationLogin?.disconnected();
             autoLogin.cancel();
             if (textAutoLogin.current === autoLogin) textAutoLogin.current = null;
+            if (accountNameHandoff.current === handoff) accountNameHandoff.current = null;
         };
     }, [session, connection.id, connection.name]);
 
@@ -1248,6 +1306,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
         // TCommandLine reads the box with toPlainText() first, so a NBSP goes
         // out as a space and U+2028/U+2029 split lines like a newline (#375).
         charLoginRef.current?.playerInput();
+        accountNameHandoff.current?.playerInput(cmdLineCommands(command)[0] ?? '');
         for (const line of cmdLineCommands(command)) {
             if (engineRef.current) {
                 engineRef.current.sendCommand(line);
