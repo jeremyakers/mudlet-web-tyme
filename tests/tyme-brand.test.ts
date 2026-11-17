@@ -195,11 +195,28 @@ describe('Tyme website theme cookie', () => {
             connectionProfile: { ...originalProfiles, untouched: {}, chosen: { outputWrapAt: 100 } },
         });
 
-        applyTymeFullWidth();
+        const stop = applyTymeFullWidth();
+        stop();
 
         const profiles = useAppStore.getState().connectionProfile;
         expect(profiles.untouched.outputWrapAt).toBe(0);
         expect(profiles.chosen.outputWrapAt).toBe(100);
+    });
+
+    it('applies full width to settings loaded from a profile file when it opens', () => {
+        // Existing profiles keep their settings in the profile's own file, which
+        // replaces the in-memory entry only when the profile opens.
+        const stop = applyTymeFullWidth();
+        try {
+            useAppStore.getState().hydrateConnectionData('opened', { profile: { fontSize: 14 } });
+            useAppStore.getState().hydrateConnectionData('opened-chosen', { profile: { outputWrapAt: 80 } });
+        } finally {
+            stop();
+        }
+
+        const profiles = useAppStore.getState().connectionProfile;
+        expect(profiles.opened).toEqual({ fontSize: 14, outputWrapAt: 0 });
+        expect(profiles['opened-chosen'].outputWrapAt).toBe(80);
     });
 
     it('loads the light launcher palette from the site cookie', () => {

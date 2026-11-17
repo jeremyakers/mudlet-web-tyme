@@ -4,7 +4,7 @@ import { getBrand, isLightTheme, type BrandConfig, type LandingProps } from './b
 import { AboutModal } from './ui/AboutModal';
 import { Button } from './ui/components';
 import { useAppStore } from './storage/appStore';
-import type { Theme } from './storage/schema';
+import type { AppSchema, Theme } from './storage/schema';
 import { resolveTheme } from './utils/systemTheme';
 import enabledPorts from './tyme-enabled-ports.json';
 import {
@@ -28,12 +28,19 @@ export function writeTymeSiteTheme(theme: Theme, target: Document = document): v
 }
 
 /** Output fills the browser window: a profile that never chose a wrap width
- *  wraps at the window edge (0) instead of desktop's fixed 100 columns. */
-export function applyTymeFullWidth(): void {
-    const { connectionProfile, patchConnectionProfile } = useAppStore.getState();
-    for (const [id, profile] of Object.entries(connectionProfile)) {
-        if (profile.outputWrapAt === undefined) patchConnectionProfile(id, { outputWrapAt: 0 });
-    }
+ *  wraps at the window edge (0) instead of desktop's fixed 100 columns. A
+ *  profile's settings load from its own file when it opens, so this keeps
+ *  watching; returns the unsubscribe. */
+export function applyTymeFullWidth(): () => void {
+    const fill = ({ connectionProfile }: Pick<AppSchema, 'connectionProfile'>) => {
+        for (const [id, profile] of Object.entries(connectionProfile)) {
+            if (profile.outputWrapAt === undefined) {
+                useAppStore.getState().patchConnectionProfile(id, { outputWrapAt: 0 });
+            }
+        }
+    };
+    fill(useAppStore.getState());
+    return useAppStore.subscribe(fill);
 }
 
 export function TymeLanding({ openProfile, ensureBrandProfile, openSettings }: LandingProps) {
