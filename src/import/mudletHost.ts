@@ -362,7 +362,7 @@ export function applyProfileSettingsToHost(host: Element, s: Partial<ProfileSett
     // so 0 here leaves desktop's own width rather than wrapping it at 1 column,
     // and drops a 0 an earlier export left behind.
     if (s.outputWrapAt) setHostEl(host, 'wrapAt', String(s.outputWrapAt));
-    else if (s.outputWrapAt === 0 && host.querySelector(':scope > wrapAt')?.textContent?.trim() === '0') {
+    else if (host.querySelector(':scope > wrapAt')?.textContent?.trim() === '0') {
         host.querySelector(':scope > wrapAt')?.remove();
     }
     if (s.outputWrapIndent !== undefined) setHostEl(host, 'wrapIndentCount', String(s.outputWrapIndent));

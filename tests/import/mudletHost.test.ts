@@ -175,6 +175,12 @@ describe('parseMudletHost', () => {
             applyProfileSettingsToHost(el, { outputWrapAt: 0 });
             expect(el.querySelector(':scope > wrapAt')).toBeNull();
         });
+
+        it('drops that 0 once the wrap setting is cleared, too', () => {
+            const el = host(`<Host><wrapAt>0</wrapAt></Host>`);
+            applyProfileSettingsToHost(el, { commandSeparator: ';;' });
+            expect(el.querySelector(':scope > wrapAt')).toBeNull();
+        });
     });
 
     // Mudlet's "Main display size" preference pair (XMLimport.cpp:1148-1150,
