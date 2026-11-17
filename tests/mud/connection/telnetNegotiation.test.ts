@@ -125,6 +125,24 @@ describe('telnet option negotiation (TelnetNegotiator via MudClient)', () => {
     expect(sentText(sock)).toContain(TTYPE_IS + 'MTTS ');
   });
 
+  // MTTS: IAC DONT TTYPE ends the cycle, so after a server re-initialises
+  // TTYPE (e.g. a copyover) the next SEND starts from the client name again.
+  it('restarts the TTYPE cycle at the client name after DONT TTYPE and a new DO TTYPE', () => {
+    const { sock } = connected();
+    const sendReq = '\xFF\xFA' + OPT_TTYPE + TTYPE_SEND + '\xFF\xF0';
+    sock.deliver(TTYPE_DO);
+    sock.deliver(sendReq); // name
+    sock.deliver(sendReq); // terminal type
+    sock.deliver(sendReq); // MTTS bitvector
+
+    sock.deliver('\xFF\xFE' + OPT_TTYPE); // IAC DONT TTYPE
+    sock.deliver(TTYPE_DO);
+    sock.sent.length = 0;
+    sock.deliver(sendReq);
+    expect(sentText(sock)).toContain(TTYPE_IS + 'MUDLET-WEB');
+    expect(sentText(sock)).not.toContain('MTTS ');
+  });
+
   it('sets the MTTS SCREEN READER bit in the TTYPE cycle when advertiseScreenReader is on', () => {
     const { sock } = connected({ screenReaderAdvertised: true });
     sock.deliver(TTYPE_DO);
