@@ -1354,8 +1354,11 @@ export function SettingsModal({ onClose, connectionId, vfs = null, tlsStatus = n
                                 (Mudlet's <code>setWindowWrap("main", N)</code>): a
                                 longer line is stored and shown as several lines, so{' '}
                                 <code>getLines</code> and the cursor functions count
-                                them the way Mudlet does. Default <code>100</code>, as
-                                in Mudlet; leave it blank to go back to that.{' '}
+                                them the way Mudlet does. Default{' '}
+                                {PROFILE_DEFAULTS.outputWrapAt
+                                    ? <><code>{PROFILE_DEFAULTS.outputWrapAt}</code>, as in Mudlet</>
+                                    : <>off (lines fill the window width)</>}
+                                ; leave it blank to go back to that.{' '}
                                 <code>0</code> turns this wrapping off so lines fill
                                 the window width.
                             </HelpTip>
@@ -1368,7 +1371,7 @@ export function SettingsModal({ onClose, connectionId, vfs = null, tlsStatus = n
                                 max={MAX_WRAP_AT}
                                 step={1}
                                 value={wrapAtText}
-                                placeholder="100"
+                                placeholder={String(PROFILE_DEFAULTS.outputWrapAt)}
                                 onChange={e => setWrapAtText(e.target.value)}
                                 onBlur={handleWrapAtBlur}
                             />
