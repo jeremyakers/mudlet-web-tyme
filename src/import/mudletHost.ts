@@ -359,8 +359,12 @@ export function applyProfileSettingsToHost(host: Element, s: Partial<ProfileSett
     if (s.commandSeparator !== undefined) setHostEl(host, 'mCommandSeparator', s.commandSeparator);
     if (s.autoClearInput !== undefined) host.setAttribute('autoClearCommandLineAfterSend', s.autoClearInput ? 'yes' : 'no');
     // Desktop has no wrap-off: it reads <wrapAt> as at least 1 (XMLimport.cpp),
-    // so 0 here leaves desktop's own width rather than wrapping it at 1 column.
+    // so 0 here leaves desktop's own width rather than wrapping it at 1 column,
+    // and drops a 0 an earlier export left behind.
     if (s.outputWrapAt) setHostEl(host, 'wrapAt', String(s.outputWrapAt));
+    else if (s.outputWrapAt === 0 && host.querySelector(':scope > wrapAt')?.textContent?.trim() === '0') {
+        host.querySelector(':scope > wrapAt')?.remove();
+    }
     if (s.outputWrapIndent !== undefined) setHostEl(host, 'wrapIndentCount', String(s.outputWrapIndent));
     if (s.outputWrapHangingIndent !== undefined) setHostEl(host, 'wrapHangingIndentCount', String(s.outputWrapHangingIndent));
     if (s.outputForeground) setHostEl(host, 'mFgColor', s.outputForeground);
