@@ -453,7 +453,8 @@ function hasTaggedSliceChanged<T extends { id: string; packageName?: string }>(
 /** Window event naming the server-offered (Client.GUI) package now present, installed or already there. */
 export const SERVER_GUI_PACKAGE_EVENT = 'mudlet-server-gui-package';
 function announceServerGuiPackage(name: string): void {
-    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SERVER_GUI_PACKAGE_EVENT, { detail: name }));
+    // Scripting also runs in non-DOM hosts (tests, workers) where window may lack dispatchEvent.
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent(SERVER_GUI_PACKAGE_EVENT, { detail: name }));
 }
 
 export class ScriptingEngine implements EngineHost {
