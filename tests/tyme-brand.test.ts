@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-    applyTymeSiteTheme, TymeAccountError, TymeLanding, tymeBrandForPage, tymeBrandFromSearch, tymeCharacterFromSearch,
+    applyTymeFullWidth, applyTymeSiteTheme, TymeAccountError, TymeLanding, tymeBrandForPage, tymeBrandFromSearch, tymeCharacterFromSearch,
     tymeCreationFromSearch, writeTymeSiteTheme,
 } from '../src/tyme-brand';
 import type { CreationTarget, OwnedCharacter } from '../src/tyme-account';
@@ -180,10 +180,61 @@ describe('Tyme account-owned character launch', () => {
 describe('Tyme website theme cookie', () => {
     const originalClient = useAppStore.getState().client;
     const originalProfiles = useAppStore.getState().connectionProfile;
+    const originalConnections = useAppStore.getState().connections;
+    /** Saved Tyme profiles with the given ids, as the website's client stores them. */
+    const saveProfiles = (...ids: string[]) => useAppStore.setState({
+        connections: [...originalConnections, ...ids.map(id => ({ id, name: id, mode: 'mud' as const, host: 'tymemud.com', port: 8000 }))],
+    });
 
     afterEach(() => {
-        useAppStore.setState({ client: originalClient, connectionProfile: originalProfiles });
+        useAppStore.setState({ client: originalClient, connectionProfile: originalProfiles, connections: originalConnections });
         setBrand();
+    });
+
+    it('starts new Tyme profiles at full window width', () => {
+        expect(tymeBrandFromSearch('?port=8000')?.profileDefaults?.outputWrapAt).toBe(0);
+    });
+
+    it('moves saved profiles that never chose a wrap width to full width, keeping a chosen one', () => {
+        // A profile the earlier site created may have no settings entry at all.
+        saveProfiles('bare', 'untouched', 'chosen');
+        useAppStore.setState({
+            connectionProfile: { ...originalProfiles, untouched: { fontSize: 14 }, chosen: { outputWrapAt: 100 } },
+        });
+
+        applyTymeFullWidth()();
+
+        const profiles = useAppStore.getState().connectionProfile;
+        expect(profiles.bare?.outputWrapAt).toBe(0);
+        expect(profiles.untouched).toEqual({ fontSize: 14, outputWrapAt: 0 });
+        expect(profiles.chosen.outputWrapAt).toBe(100);
+    });
+
+    it('leaves another game saved in the same browser at its own wrap default', () => {
+        useAppStore.setState({
+            connections: [...originalConnections, { id: 'other-game', name: 'Other', mode: 'websocket', url: 'wss://example.invalid/game' }],
+        });
+
+        applyTymeFullWidth()();
+
+        expect(useAppStore.getState().connectionProfile['other-game']).toBeUndefined();
+    });
+
+    it('applies full width to settings loaded from a profile file when it opens', () => {
+        // Existing profiles keep their settings in the profile's own file, which
+        // replaces the in-memory entry only when the profile opens.
+        saveProfiles('opened', 'opened-chosen');
+        const stop = applyTymeFullWidth();
+        try {
+            useAppStore.getState().hydrateConnectionData('opened', { profile: { fontSize: 14 } });
+            useAppStore.getState().hydrateConnectionData('opened-chosen', { profile: { outputWrapAt: 80 } });
+        } finally {
+            stop();
+        }
+
+        const profiles = useAppStore.getState().connectionProfile;
+        expect(profiles.opened).toEqual({ fontSize: 14, outputWrapAt: 0 });
+        expect(profiles['opened-chosen'].outputWrapAt).toBe(80);
     });
 
     it('loads the light launcher palette from the site cookie', () => {

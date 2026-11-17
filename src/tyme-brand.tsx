@@ -4,7 +4,7 @@ import { getBrand, isLightTheme, type BrandConfig, type LandingProps } from './b
 import { AboutModal } from './ui/AboutModal';
 import { Button } from './ui/components';
 import { useAppStore } from './storage/appStore';
-import type { Theme } from './storage/schema';
+import type { AppSchema, Theme } from './storage/schema';
 import { resolveTheme } from './utils/systemTheme';
 import enabledPorts from './tyme-enabled-ports.json';
 import {
@@ -13,6 +13,7 @@ import {
 } from './tyme-account';
 import logoUrl from './tyme-banner.png?url';
 
+const TYME_HOST = 'tymemud.com';
 let initialConnectAttempted = false;
 
 /** The website owns the launcher default; a profile's own theme still wins in App. */
@@ -25,6 +26,24 @@ export function applyTymeSiteTheme(cookie = document.cookie): void {
 export function writeTymeSiteTheme(theme: Theme, target: Document = document): void {
     const selected = isLightTheme(resolveTheme(theme)) ? 'light' : 'dark';
     target.cookie = `olc_theme=${selected};path=/;max-age=31536000;samesite=lax`;
+}
+
+/** Output fills the browser window: a profile that never chose a wrap width
+ *  wraps at the window edge (0) instead of desktop's fixed 100 columns. A
+ *  profile's settings load from its own file when it opens, so this keeps
+ *  watching; returns the unsubscribe. */
+export function applyTymeFullWidth(): () => void {
+    const fill = ({ connections, connectionProfile }: Pick<AppSchema, 'connections' | 'connectionProfile'>) => {
+        // Every saved Tyme profile, including one with no settings entry yet;
+        // another game's profile in the same browser keeps its own default.
+        for (const { id, mode, host } of connections) {
+            if (mode === 'mud' && host === TYME_HOST && connectionProfile[id]?.outputWrapAt === undefined) {
+                useAppStore.getState().patchConnectionProfile(id, { outputWrapAt: 0 });
+            }
+        }
+    };
+    fill(useAppStore.getState());
+    return useAppStore.subscribe(fill);
 }
 
 export function TymeLanding({ openProfile, ensureBrandProfile, openSettings }: LandingProps) {
@@ -146,10 +165,11 @@ export function tymeBrandFromSearch(
             mode: 'mud',
             name: owned ? `${owned.name} — ${selected.label}`
                 : creation ? `Create ${creation.name} — ${selected.label}` : `A Moment in Tyme — ${selected.label}`,
-            host: 'tymemud.com',
+            host: TYME_HOST,
             port: selected.port,
         },
         profileMode: 'single',
+        profileDefaults: { outputWrapAt: 0 },
         packages: [],
         Landing: TymeLanding,
         ...accountBrand,

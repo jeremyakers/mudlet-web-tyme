@@ -7,7 +7,7 @@ import { credentialVault } from './vault/CredentialVault';
 import { VaultModal } from './ui/VaultModal';
 import { installVault } from './vault/vaultAccess';
 import { installVaultHelpTopic } from './vault/vaultHelpTopic';
-import { applyTymeSiteTheme, tymeBrandForPage, TymeAccountError, TymePortError } from './tyme-brand';
+import { applyTymeFullWidth, applyTymeSiteTheme, tymeBrandForPage, TymeAccountError, TymePortError } from './tyme-brand';
 import './tyme-brand.css';
 
 // A `character` selector is confirmed by the website before anything opens;
@@ -36,7 +36,7 @@ void Promise.race([
 ]).finally(async () => {
     const page = await tymePage;
     const tymeBrand = page && 'brand' in page ? page.brand : null;
-    if (tymeBrand) applyTymeSiteTheme();
+    if (tymeBrand) { applyTymeSiteTheme(); applyTymeFullWidth(); }
     if (tymeBrand?.mud?.mode === 'mud') {
         // Only a validated, configured brand creates a manifest link. The static
         // standalone document advertises no invalid portless launch, while the
