@@ -144,12 +144,12 @@ export interface ClientSettings {
      *  ConnectionScreen uses this as the placeholder/default instead of
      *  DEFAULT_PROXY_URL, so new connections route through the user's worker. */
     userProxyUrl?: string;
-    /** Opt-in to desktop notifications (Mudlet's `showNotification`). `undefined`
-     *  / `false` means off — `showNotification` is a no-op until the user enables
-     *  this in Settings, which is also where the browser permission prompt is
-     *  triggered (a real user gesture), so the first script notification can fire
-     *  without a surprise permission pop-up. */
+    /** Desktop notifications (Mudlet's `showNotification`). On unless set to
+     *  `false`; the browser permission is requested on the player's first click or
+     *  offer bar shown when the game's notification package is present, or from Settings. */
     notificationsEnabled?: boolean;
+    /** The player chose "No thanks" on the desktop-notification offer bar; it is not shown again (Settings still turns notifications on). */
+    notificationOfferDismissed?: boolean;
     /**
      * Keyboard-shortcut overrides, keyed by `AppCommandId` (see
      * `ui/commands/appShortcuts.ts`), each a Qt-style sequence such as
@@ -376,8 +376,8 @@ export interface ProfileSettings {
      *  (`Notepad/SendControlsVisible` in the profile's ini). */
     notepadSendControls?: boolean;
     /** Flash the browser tab title (Mudlet's taskbar-blink equivalent) when new
-     *  server data arrives while the Mudlet Web tab/window is unfocused. Off unless
-     *  explicitly set to true. */
+     *  server data arrives while the Mudlet Web tab/window is unfocused. On unless
+     *  explicitly set to false. */
     notifyOnNewData?: boolean;
     /** Mirror script/trigger/alias/timer errors into the main output window (in
      *  red), in addition to the script editor's Errors tab. Mudlet's "Show

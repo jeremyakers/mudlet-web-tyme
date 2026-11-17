@@ -1,3 +1,4 @@
+import { NotificationOfferBar } from './ui/NotificationOfferBar';
 import { ViewportModeProvider } from './hooks/useViewportMode';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -193,7 +194,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
     const loggingEnabled = useAppStore(s => selectProfileField(s, connection.id, 'loggingEnabled')) !== false;
     // Flash the tab title when server data arrives while the tab is unfocused
     // (Mudlet's "notify on new data" / taskbar blink). Off unless explicitly on.
-    const notifyOnNewData = useAppStore(s => selectProfileField(s, connection.id, 'notifyOnNewData')) === true;
+    const notifyOnNewData = useAppStore(s => selectProfileField(s, connection.id, 'notifyOnNewData')) !== false; // on unless turned off
     // Mudlet's "Show errors in main console": mirror script errors into the main
     // output window (red), not just the script editor's Errors tab. Off by default.
     const showErrorsInMainWindow = useAppStore(s => selectProfileField(s, connection.id, 'showErrorsInMainWindow')) === true;
@@ -1381,6 +1382,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
                 </a>
             </nav>
             <h1 className="sr-only">{connection.name}</h1>
+            <NotificationOfferBar />
             <Toolbar
                 connectionName={connection.name}
                 status={status}

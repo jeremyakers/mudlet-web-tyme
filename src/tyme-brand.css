@@ -53,3 +53,8 @@
         display: none;
     }
 }
+
+/* Desktop-notification offer, shown once the game's notification package is present. */
+.notification-offer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .4rem .75rem; border-bottom: 1px solid var(--border-color, #444); background: var(--panel-bg, #1b1f27); color: inherit; font-size: .9rem; }
+.notification-offer button { padding: .2rem .7rem; border: 1px solid var(--border-color, #555); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.notification-offer .notification-offer-on { background: #2f5fd0; border-color: #2f5fd0; color: #fff; }

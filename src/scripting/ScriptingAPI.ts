@@ -7722,7 +7722,7 @@ export class ScriptingAPI {
      * notification appeared".
      */
     showNotification(title: string, content?: string, expirySeconds?: number): boolean {
-        const enabled = useAppStore.getState().client.notificationsEnabled === true;
+        const enabled = useAppStore.getState().client.notificationsEnabled !== false; // on unless turned off
         if (enabled
             && typeof window !== 'undefined'
             && 'Notification' in window
