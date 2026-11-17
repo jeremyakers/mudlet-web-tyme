@@ -180,9 +180,14 @@ describe('Tyme account-owned character launch', () => {
 describe('Tyme website theme cookie', () => {
     const originalClient = useAppStore.getState().client;
     const originalProfiles = useAppStore.getState().connectionProfile;
+    const originalConnections = useAppStore.getState().connections;
+    /** Saved Tyme profiles with the given ids, as the website's client stores them. */
+    const saveProfiles = (...ids: string[]) => useAppStore.setState({
+        connections: [...originalConnections, ...ids.map(id => ({ id, name: id, mode: 'mud' as const, host: 'tymemud.com', port: 8000 }))],
+    });
 
     afterEach(() => {
-        useAppStore.setState({ client: originalClient, connectionProfile: originalProfiles });
+        useAppStore.setState({ client: originalClient, connectionProfile: originalProfiles, connections: originalConnections });
         setBrand();
     });
 
@@ -190,22 +195,25 @@ describe('Tyme website theme cookie', () => {
         expect(tymeBrandFromSearch('?port=8000')?.profileDefaults?.outputWrapAt).toBe(0);
     });
 
-    it('moves profiles that never chose a wrap width to full width, keeping a chosen one', () => {
+    it('moves saved profiles that never chose a wrap width to full width, keeping a chosen one', () => {
+        // A profile the earlier site created may have no settings entry at all.
+        saveProfiles('bare', 'untouched', 'chosen');
         useAppStore.setState({
-            connectionProfile: { ...originalProfiles, untouched: {}, chosen: { outputWrapAt: 100 } },
+            connectionProfile: { ...originalProfiles, untouched: { fontSize: 14 }, chosen: { outputWrapAt: 100 } },
         });
 
-        const stop = applyTymeFullWidth();
-        stop();
+        applyTymeFullWidth()();
 
         const profiles = useAppStore.getState().connectionProfile;
-        expect(profiles.untouched.outputWrapAt).toBe(0);
+        expect(profiles.bare?.outputWrapAt).toBe(0);
+        expect(profiles.untouched).toEqual({ fontSize: 14, outputWrapAt: 0 });
         expect(profiles.chosen.outputWrapAt).toBe(100);
     });
 
     it('applies full width to settings loaded from a profile file when it opens', () => {
         // Existing profiles keep their settings in the profile's own file, which
         // replaces the in-memory entry only when the profile opens.
+        saveProfiles('opened', 'opened-chosen');
         const stop = applyTymeFullWidth();
         try {
             useAppStore.getState().hydrateConnectionData('opened', { profile: { fontSize: 14 } });

@@ -32,9 +32,10 @@ export function writeTymeSiteTheme(theme: Theme, target: Document = document): v
  *  profile's settings load from its own file when it opens, so this keeps
  *  watching; returns the unsubscribe. */
 export function applyTymeFullWidth(): () => void {
-    const fill = ({ connectionProfile }: Pick<AppSchema, 'connectionProfile'>) => {
-        for (const [id, profile] of Object.entries(connectionProfile)) {
-            if (profile.outputWrapAt === undefined) {
+    const fill = ({ connections, connectionProfile }: Pick<AppSchema, 'connections' | 'connectionProfile'>) => {
+        // Every saved profile, including one with no settings entry yet.
+        for (const { id } of connections) {
+            if (connectionProfile[id]?.outputWrapAt === undefined) {
                 useAppStore.getState().patchConnectionProfile(id, { outputWrapAt: 0 });
             }
         }
