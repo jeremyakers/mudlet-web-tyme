@@ -153,6 +153,22 @@ describe('parseMudletHost', () => {
         });
     });
 
+    describe('wrapAt', () => {
+        it('writes a wrap width onto the <Host> element', () => {
+            const el = host(`<Host><wrapAt>100</wrapAt></Host>`);
+            applyProfileSettingsToHost(el, { outputWrapAt: 80 });
+            expect(el.querySelector(':scope > wrapAt')?.textContent).toBe('80');
+        });
+
+        it('keeps desktop\'s width when wrapping is off here', () => {
+            // Desktop reads <wrapAt> as at least 1 (XMLimport.cpp), so writing
+            // 0 would wrap the desktop profile at one column.
+            const el = host(`<Host><wrapAt>100</wrapAt></Host>`);
+            applyProfileSettingsToHost(el, { outputWrapAt: 0 });
+            expect(el.querySelector(':scope > wrapAt')?.textContent).toBe('100');
+        });
+    });
+
     // Mudlet's "Main display size" preference pair (XMLimport.cpp:1148-1150,
     // XMLexport.cpp:617-618).
     describe('consoleBufferSize', () => {
