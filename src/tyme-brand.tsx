@@ -27,6 +27,15 @@ export function writeTymeSiteTheme(theme: Theme, target: Document = document): v
     target.cookie = `olc_theme=${selected};path=/;max-age=31536000;samesite=lax`;
 }
 
+/** Output fills the browser window: a profile that never chose a wrap width
+ *  wraps at the window edge (0) instead of desktop's fixed 100 columns. */
+export function applyTymeFullWidth(): void {
+    const { connectionProfile, patchConnectionProfile } = useAppStore.getState();
+    for (const [id, profile] of Object.entries(connectionProfile)) {
+        if (profile.outputWrapAt === undefined) patchConnectionProfile(id, { outputWrapAt: 0 });
+    }
+}
+
 export function TymeLanding({ openProfile, ensureBrandProfile, openSettings }: LandingProps) {
     const brand = getBrand();
     const [aboutOpen, setAboutOpen] = useState(false);
@@ -150,6 +159,7 @@ export function tymeBrandFromSearch(
             port: selected.port,
         },
         profileMode: 'single',
+        profileDefaults: { outputWrapAt: 0 },
         packages: [],
         Landing: TymeLanding,
         ...accountBrand,

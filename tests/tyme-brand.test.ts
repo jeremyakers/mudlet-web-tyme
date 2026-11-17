@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-    applyTymeSiteTheme, TymeAccountError, TymeLanding, tymeBrandForPage, tymeBrandFromSearch, tymeCharacterFromSearch,
+    applyTymeFullWidth, applyTymeSiteTheme, TymeAccountError, TymeLanding, tymeBrandForPage, tymeBrandFromSearch, tymeCharacterFromSearch,
     tymeCreationFromSearch, writeTymeSiteTheme,
 } from '../src/tyme-brand';
 import type { CreationTarget, OwnedCharacter } from '../src/tyme-account';
@@ -184,6 +184,22 @@ describe('Tyme website theme cookie', () => {
     afterEach(() => {
         useAppStore.setState({ client: originalClient, connectionProfile: originalProfiles });
         setBrand();
+    });
+
+    it('starts new Tyme profiles at full window width', () => {
+        expect(tymeBrandFromSearch('?port=8000')?.profileDefaults?.outputWrapAt).toBe(0);
+    });
+
+    it('moves profiles that never chose a wrap width to full width, keeping a chosen one', () => {
+        useAppStore.setState({
+            connectionProfile: { ...originalProfiles, untouched: {}, chosen: { outputWrapAt: 100 } },
+        });
+
+        applyTymeFullWidth();
+
+        const profiles = useAppStore.getState().connectionProfile;
+        expect(profiles.untouched.outputWrapAt).toBe(0);
+        expect(profiles.chosen.outputWrapAt).toBe(100);
     });
 
     it('loads the light launcher palette from the site cookie', () => {
