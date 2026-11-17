@@ -191,7 +191,7 @@ export function SettingsModal({ onClose, connectionId, vfs = null, tlsStatus = n
     const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
         notificationsSupported ? Notification.permission : 'denied',
     );
-    const notificationsOn = notificationsEnabled === true && notifPermission === 'granted';
+    const notificationsOn = notificationsEnabled !== false && notifPermission === 'granted'; // on unless turned off
 
     // Toggling on requests browser permission here — a real user gesture — so the
     // first script-driven showNotification fires without a surprise prompt. We
@@ -237,7 +237,7 @@ export function SettingsModal({ onClose, connectionId, vfs = null, tlsStatus = n
     const promptTimeoutMs = useAppStore(s => selectProfileField(s, connectionId, 'promptTimeoutMs'));
     const loggingEnabled = useAppStore(s => selectProfileField(s, connectionId, 'loggingEnabled'));
     const loggingOn = loggingEnabled !== false;
-    const notifyOnNewData = useAppStore(s => selectProfileField(s, connectionId, 'notifyOnNewData')) === true;
+    const notifyOnNewData = useAppStore(s => selectProfileField(s, connectionId, 'notifyOnNewData')) !== false; // on unless turned off
     const showErrorsInMainWindow = useAppStore(s => selectProfileField(s, connectionId, 'showErrorsInMainWindow')) === true;
     // Mudlet's two bars. Absent means on, so a profile written before they
     // existed keeps the chrome it had.

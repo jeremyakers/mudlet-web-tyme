@@ -9,6 +9,7 @@ import { installVault } from './vault/vaultAccess';
 import { installVaultHelpTopic } from './vault/vaultHelpTopic';
 import { applyTymeSiteTheme, tymeBrandForPage, TymeAccountError, TymePortError } from './tyme-brand';
 import './tyme-brand.css';
+import { installFirstGestureNotificationPermission } from './notificationPermission';
 
 // A `character` selector is confirmed by the website before anything opens;
 // the guest `?port=` path resolves immediately. See tyme-account.ts.
@@ -25,6 +26,7 @@ const tymePage = tymeBrandForPage(window.location.search);
 // entirely rather than merely unused there. See `vault/vaultAccess`.
 installVault(credentialVault, VaultModal);
 installVaultHelpTopic();
+installFirstGestureNotificationPermission();
 
 // A vault the player kept unlocked on this device opens before the first
 // render, so a cold auto-connect reads its passwords instead of asking. It is

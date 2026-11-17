@@ -193,7 +193,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
     const loggingEnabled = useAppStore(s => selectProfileField(s, connection.id, 'loggingEnabled')) !== false;
     // Flash the tab title when server data arrives while the tab is unfocused
     // (Mudlet's "notify on new data" / taskbar blink). Off unless explicitly on.
-    const notifyOnNewData = useAppStore(s => selectProfileField(s, connection.id, 'notifyOnNewData')) === true;
+    const notifyOnNewData = useAppStore(s => selectProfileField(s, connection.id, 'notifyOnNewData')) !== false; // on unless turned off
     // Mudlet's "Show errors in main console": mirror script errors into the main
     // output window (red), not just the script editor's Errors tab. Off by default.
     const showErrorsInMainWindow = useAppStore(s => selectProfileField(s, connection.id, 'showErrorsInMainWindow')) === true;
