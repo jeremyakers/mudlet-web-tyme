@@ -19,6 +19,23 @@ describe('desktop notification defaults', () => {
     });
     afterEach(() => { (window as unknown as { Notification?: unknown }).Notification = original; });
 
+    it('asks on a click (which completes a touch), not on pointerdown', () => {
+        installFirstGestureNotificationPermission();
+        window.dispatchEvent(new Event('pointerdown'));
+        expect(requests).toBe(0);
+        window.dispatchEvent(new MouseEvent('click'));
+        expect(requests).toBe(1);
+    });
+
+    it('announces the resolved permission so an open Settings panel can update', async () => {
+        const seen: string[] = [];
+        window.addEventListener('tyme-notification-permission', e => seen.push((e as CustomEvent).detail));
+        installFirstGestureNotificationPermission();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+        await Promise.resolve(); await Promise.resolve();
+        expect(seen).toEqual(['granted']);
+    });
+
     it('asks for permission once, on the first key press, when the player has not turned them off', () => {
         installFirstGestureNotificationPermission();
         expect(requests).toBe(0);

@@ -1,4 +1,5 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { NOTIFICATION_PERMISSION_EVENT } from '../notificationPermission';
 import { useAppStore, useEditorSettings, selectProfileField, PROFILE_DEFAULTS, MAPPER_DEFAULTS, symbolFontSource, PLAYER_MARKER_DEFAULTS, MAP_INFO_BG_DEFAULT, PROTOCOL_DEFAULTS, WS_SUBPROTOCOL_CHOICES, SEARCH_ENGINES, resolveSearchEngine, type Theme, type OutputFontSource, type ProfileSettings, type MapperSettings, type EditorSettings, type PlayerMarkerSettings, type MapInfoBgColor, type ProtocolSettings } from '../storage';
 import { PlayerMarkerPreview } from './PlayerMarkerPreview';
 import { Input, FontPicker, Toggle, HelpTip, Button, useConfirm } from './components';
@@ -186,12 +187,18 @@ export function SettingsModal({ onClose, connectionId, vfs = null, tlsStatus = n
     // good when the user declines an MSSP secure-port offer.
     const askTlsAvailableSetting = useAppStore(s => (connectionId ? selectProfileField(s, connectionId, 'askTlsAvailable') : undefined));
     const askTlsAvailable = askTlsAvailableSetting !== false;
-    // Notifications are opt-in (default off) and require browser permission.
+    // Notifications are on unless turned off, and require browser permission.
     const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window;
     const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
         notificationsSupported ? Notification.permission : 'denied',
     );
     const notificationsOn = notificationsEnabled !== false && notifPermission === 'granted'; // on unless turned off
+    // The first-gesture request (notificationPermission.ts) may resolve while Settings is open.
+    useEffect(() => {
+        const update = (event: Event) => setNotifPermission((event as CustomEvent<NotificationPermission>).detail);
+        window.addEventListener(NOTIFICATION_PERMISSION_EVENT, update);
+        return () => window.removeEventListener(NOTIFICATION_PERMISSION_EVENT, update);
+    }, []);
 
     // Toggling on requests browser permission here — a real user gesture — so the
     // first script-driven showNotification fires without a surprise prompt. We
