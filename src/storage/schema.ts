@@ -146,8 +146,10 @@ export interface ClientSettings {
     userProxyUrl?: string;
     /** Desktop notifications (Mudlet's `showNotification`). On unless set to
      *  `false`; the browser permission is requested on the player's first click or
-     *  key press in the client (see notificationPermission.ts), or from Settings. */
+     *  offer bar shown when the game's notification package is present, or from Settings. */
     notificationsEnabled?: boolean;
+    /** The player chose "Not now" on the desktop-notification offer bar; it is not shown again. */
+    notificationOfferDismissed?: boolean;
     /**
      * Keyboard-shortcut overrides, keyed by `AppCommandId` (see
      * `ui/commands/appShortcuts.ts`), each a Qt-style sequence such as

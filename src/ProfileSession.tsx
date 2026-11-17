@@ -1,3 +1,4 @@
+import { NotificationOfferBar } from './ui/NotificationOfferBar';
 import { ViewportModeProvider } from './hooks/useViewportMode';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -1381,6 +1382,7 @@ export function ProfileSession({ connection, autoConnect, vfs, settingsOpen, onT
                 </a>
             </nav>
             <h1 className="sr-only">{connection.name}</h1>
+            <NotificationOfferBar />
             <Toolbar
                 connectionName={connection.name}
                 status={status}

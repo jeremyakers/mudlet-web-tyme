@@ -450,6 +450,12 @@ function hasTaggedSliceChanged<T extends { id: string; packageName?: string }>(
     return false;
 }
 
+/** Window event naming the server-offered (Client.GUI) package now present, installed or already there. */
+export const SERVER_GUI_PACKAGE_EVENT = 'mudlet-server-gui-package';
+function announceServerGuiPackage(name: string): void {
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SERVER_GUI_PACKAGE_EVENT, { detail: name }));
+}
+
 export class ScriptingEngine implements EngineHost {
     private runtimes: { lua: IScriptingRuntime | null } = { lua: null };
     private readonly unsubs: (() => void)[] = [];
@@ -3387,7 +3393,7 @@ export class ScriptingEngine implements EngineHost {
         const urlName = clientGuiPackageName(url);
         const existing = installed.find(p => p.sourceUrl === url)
             ?? installed.find(p => p.kind !== 'module' && p.name === urlName);
-        if (isClientGuiRedelivery(existing, version)) return;
+        if (isClientGuiRedelivery(existing, version)) { announceServerGuiPackage(existing!.name); return; }
 
         const vfs = this.vfs;
         if (!vfs) {
@@ -3461,6 +3467,7 @@ export class ScriptingEngine implements EngineHost {
             // to decide when to come back — so the manifest name is the one that
             // round-trips here.
             this.raiseEvent('sysServerGuiInstalled', [finalManifest.name]);
+            announceServerGuiPackage(finalManifest.name);
             const versionSuffix = finalManifest.version ? ` v${finalManifest.version}` : '';
             this.session.events.emit('message',
                 mudletInfo(`installed ${finalManifest.name}${versionSuffix}`),
