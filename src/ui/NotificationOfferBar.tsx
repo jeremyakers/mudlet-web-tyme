@@ -18,12 +18,12 @@ export function NotificationOfferBar({ packageName = 'tyme-notify' }: { packageN
     if (!open) return null;
     return (
         <div className="notification-offer" role="region" aria-label="Desktop notifications">
-            <span>Get desktop notifications for tells, mail and more?</span>
+            <span>Get desktop notifications for tells, mail and more? You can change this later in Settings &gt; General.</span>
             <button type="button" className="notification-offer-on" onClick={() => {
                 setOpen(false);
                 void requestNotificationPermission().then(result => patchClient({ notificationsEnabled: result === 'granted' ? true : undefined }));
             }}>Turn on</button>
-            <button type="button" onClick={() => { setOpen(false); patchClient({ notificationOfferDismissed: true }); }}>Not now</button>
+            <button type="button" onClick={() => { setOpen(false); patchClient({ notificationOfferDismissed: true }); }}>No thanks</button>
         </div>
     );
 }

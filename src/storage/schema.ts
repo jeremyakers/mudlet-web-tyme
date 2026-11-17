@@ -148,7 +148,7 @@ export interface ClientSettings {
      *  `false`; the browser permission is requested on the player's first click or
      *  offer bar shown when the game's notification package is present, or from Settings. */
     notificationsEnabled?: boolean;
-    /** The player chose "Not now" on the desktop-notification offer bar; it is not shown again. */
+    /** The player chose "No thanks" on the desktop-notification offer bar; it is not shown again (Settings still turns notifications on). */
     notificationOfferDismissed?: boolean;
     /**
      * Keyboard-shortcut overrides, keyed by `AppCommandId` (see
