@@ -210,6 +210,16 @@ describe('Tyme website theme cookie', () => {
         expect(profiles.chosen.outputWrapAt).toBe(100);
     });
 
+    it('leaves another game saved in the same browser at its own wrap default', () => {
+        useAppStore.setState({
+            connections: [...originalConnections, { id: 'other-game', name: 'Other', mode: 'websocket', url: 'wss://example.invalid/game' }],
+        });
+
+        applyTymeFullWidth()();
+
+        expect(useAppStore.getState().connectionProfile['other-game']).toBeUndefined();
+    });
+
     it('applies full width to settings loaded from a profile file when it opens', () => {
         // Existing profiles keep their settings in the profile's own file, which
         // replaces the in-memory entry only when the profile opens.

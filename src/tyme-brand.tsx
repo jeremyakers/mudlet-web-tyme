@@ -13,6 +13,7 @@ import {
 } from './tyme-account';
 import logoUrl from './tyme-banner.png?url';
 
+const TYME_HOST = 'tymemud.com';
 let initialConnectAttempted = false;
 
 /** The website owns the launcher default; a profile's own theme still wins in App. */
@@ -33,9 +34,10 @@ export function writeTymeSiteTheme(theme: Theme, target: Document = document): v
  *  watching; returns the unsubscribe. */
 export function applyTymeFullWidth(): () => void {
     const fill = ({ connections, connectionProfile }: Pick<AppSchema, 'connections' | 'connectionProfile'>) => {
-        // Every saved profile, including one with no settings entry yet.
-        for (const { id } of connections) {
-            if (connectionProfile[id]?.outputWrapAt === undefined) {
+        // Every saved Tyme profile, including one with no settings entry yet;
+        // another game's profile in the same browser keeps its own default.
+        for (const { id, mode, host } of connections) {
+            if (mode === 'mud' && host === TYME_HOST && connectionProfile[id]?.outputWrapAt === undefined) {
                 useAppStore.getState().patchConnectionProfile(id, { outputWrapAt: 0 });
             }
         }
@@ -163,7 +165,7 @@ export function tymeBrandFromSearch(
             mode: 'mud',
             name: owned ? `${owned.name} — ${selected.label}`
                 : creation ? `Create ${creation.name} — ${selected.label}` : `A Moment in Tyme — ${selected.label}`,
-            host: 'tymemud.com',
+            host: TYME_HOST,
             port: selected.port,
         },
         profileMode: 'single',
