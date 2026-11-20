@@ -156,6 +156,9 @@ export function tymeBrandFromSearch(
                 : creation ? `Create ${creation.name} — ${selected.label}` : `A Moment in Tyme — ${selected.label}`,
             host: 'tymemud.com',
             port: selected.port,
+            // Redial after a dropped connection (e.g. the web server restarting).
+            // Not for a creation link: a redial would try to create the character again.
+            ...(creation ? {} : { autoReconnect: true }),
         },
         profileMode: 'single',
         packages: [],

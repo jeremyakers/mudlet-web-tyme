@@ -24,6 +24,7 @@ describe('Tyme client port selection', () => {
             name: 'A Moment in Tyme — Testport',
             host: 'tymemud.com',
             port: 8000,
+            autoReconnect: true,
         });
         expect(brand?.proxyUrl).toBe('wss://tymemud.com/play/ws/8000');
         expect(brand?.documentTitle).toBe('MiT: Testport');
